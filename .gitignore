@@ -1,0 +1,54 @@
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+frontend/.env*
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.idea/
+frontend/.vscode/
+frontend/*.iml
+frontend/.DS_Store
+frontend/Thumbs.db
+
+# Documentation and Specification Files (EXCLUDE FROM REPO)
+/specs/
+/backend_infomation/
+*.md
+
+# General
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Git
+.git/
+.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+Thumbs.db
+.DS_Store
+
+
+

@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Pure Black Theme Styles */
+
+* {
+  @apply border-border;
+}
+
+html {
+  color-scheme: dark;
+  @apply bg-background text-foreground;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-feature-settings: "rounding-params(43 34)";
+}
+
+/* High Contrast Ensured */
+a {
+  @apply text-primary hover:underline;
+}
+
+button {
+  @apply transition-colors;
+}
+
+/* Focus states for accessibility */
+*:focus-visible {
+  @apply outline-2 outline-offset-2 outline-primary;
+}
+
+/* Input focus */
+input:focus,
+textarea:focus,
+select:focus {
+  @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+}
+

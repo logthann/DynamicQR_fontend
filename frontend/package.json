@@ -1,0 +1,53 @@
+{
+  "name": "dynamic-qr-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,tsx,md}\"",
+    "test": "vitest",
+    "test:e2e": "playwright test",
+    "drift-guard": "ts-node src/lib/drift-guard/check-openapi-drift.ts",
+    "wcag-check": "axe-core-playwright --outputFormat json --outputPath reports/wcag-report.json"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "next": "^14.0.0",
+    "next-themes": "^0.2.1",
+    "@tanstack/react-query": "^5.25.0",
+    "@hookform/resolvers": "^3.3.4",
+    "react-hook-form": "^7.48.0",
+    "zod": "^3.22.4",
+    "axios": "^1.6.2",
+    "clsx": "^2.0.0",
+    "tailwind-merge": "^2.2.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.42",
+    "@types/react-dom": "^18.2.17",
+    "tailwindcss": "^3.3.6",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "eslint": "^8.55.0",
+    "eslint-config-next": "^14.0.0",
+    "prettier": "^3.1.0",
+    "vitest": "^1.0.4",
+    "playwright": "^1.40.1",
+    "@playwright/test": "^1.40.1",
+    "axe-core": "^4.8.0",
+    "jest-axe": "^8.0.0",
+    "@testing-library/react": "^14.1.2",
+    "shadcn-ui": "^0.8.0",
+    "class-variance-authority": "^0.7.0",
+    "lucide-react": "^0.292.0",
+    "ts-node": "^10.9.1"
+  }
+}
+
