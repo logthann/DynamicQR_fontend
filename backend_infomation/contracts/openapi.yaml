@@ -1,0 +1,143 @@
+openapi: 3.0.3
+info:
+  title: Dynamic QR Platform API
+  version: 1.0.0
+  description: Contract for campaign, QR, redirect, integration, and analytics workflows.
+paths:
+  /api/v1/auth/register:
+    post:
+      summary: Register user
+      description: Registers user account with role constraints.
+      responses:
+        '201':
+          description: Registered
+  /api/v1/auth/login:
+    post:
+      summary: Login user
+      description: Issues JWT token.
+      responses:
+        '200':
+          description: Authenticated
+  /api/v1/campaigns:
+    get:
+      summary: List campaigns
+      description: Returns campaigns visible by RBAC role.
+      responses:
+        '200':
+          description: Campaign list
+    post:
+      summary: Create campaign
+      description: Creates campaign for authenticated owner.
+      responses:
+        '201':
+          description: Campaign created
+  /api/v1/campaigns/{campaign_id}/calendar/sync:
+    post:
+      summary: Sync campaign to Google Calendar
+      description: Creates or updates linked Google Calendar event for one campaign and updates sync metadata.
+      parameters:
+        - name: campaign_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Campaign synchronized
+        '404':
+          description: Campaign not found
+  /api/v1/campaigns/{campaign_id}/calendar/link:
+    delete:
+      summary: Remove campaign from Google Calendar
+      description: Deletes linked Google Calendar event and marks campaign sync status as removed.
+      parameters:
+        - name: campaign_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Campaign calendar link removed
+        '404':
+          description: Campaign not found
+  /api/v1/qr:
+    post:
+      summary: Create QR code
+      description: Creates URL or event QR code with Base62 short code.
+      responses:
+        '201':
+          description: QR created
+  /q/{short_code}:
+    get:
+      summary: Redirect by short code
+      description: Resolves target and returns HTTP 302 while scan log insertion runs asynchronously.
+      parameters:
+        - name: short_code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect response
+        '404':
+          description: Short code not found
+  /api/v1/analytics/{qr_id}:
+    get:
+      summary: Get QR analytics summary
+      description: Reads pre-aggregated daily metrics for one QR from daily analytics summary data.
+      parameters:
+        - name: qr_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: QR analytics summary
+  /api/v1/integrations/google-calendar/events:
+    get:
+      summary: List Google Calendar events by month or year
+      description: Returns Google Calendar event candidates enriched with local campaign sync metadata for icon rendering.
+      parameters:
+        - name: range_type
+          in: query
+          schema:
+            type: string
+            enum: [month, year]
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+      responses:
+        '200':
+          description: Event list with sync status
+  /api/v1/integrations/google-calendar/import-campaigns:
+    post:
+      summary: Import selected Google events into campaigns
+      description: Creates or updates campaigns idempotently by owner + google_event_id and returns created/updated/skipped counts.
+      responses:
+        '200':
+          description: Import summary
+
