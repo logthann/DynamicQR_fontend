@@ -42,6 +42,9 @@ export interface Campaign {
   description?: string;
   startDate?: string;
   endDate?: string;
+  googleEventId?: string;
+  calendarSyncStatus?: 'not_linked' | 'synced' | 'out_of_sync' | 'removed';
+  calendarLastSyncedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,17 +82,41 @@ export interface DeleteCampaignRequest {
 // QR Endpoints
 export interface QRCode {
   id: string;
-  campaignId: string;
+  name: string;
+  campaign_id?: number | null;
+  campaignId?: string;
+  destination_url: string;
+  destinationUrl?: string;
+  qr_type: 'url' | 'event';
+  qrType?: 'url' | 'event';
+  design_config?: Record<string, unknown> | null;
+  ga_measurement_id?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
   shortCode: string;
-  url: string;
+  short_code?: string;
+  user_id?: number;
+  deleted_at?: string | null;
   status?: 'active' | 'paused' | 'archived';
   createdAt: string;
+  created_at?: string;
   updatedAt?: string;
+  updated_at?: string;
 }
 
 export interface CreateQRRequest {
-  campaignId: string;
-  url: string;
+  owner_user_id?: number;
+  name: string;
+  campaign_id?: number | null;
+  destination_url: string;
+  qr_type: 'url' | 'event';
+  design_config?: Record<string, unknown> | null;
+  ga_measurement_id?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  status?: 'active' | 'paused' | 'archived';
 }
 
 export interface CreateQRResponse extends QRCode {}
@@ -99,14 +126,31 @@ export interface GetQRsResponse {
   total: number;
 }
 
+export interface GetQRsRequest {
+  owner_user_id?: number;
+  campaign_id?: number;
+  status_filter?: 'active' | 'paused' | 'archived';
+  include_deleted?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
 export interface GetQRByIdRequest {
   qrId: string;
 }
 
 export interface UpdateQRRequest {
   qrId: string;
-  campaignId?: string;
-  url?: string;
+  name?: string;
+  campaign_id?: number | null;
+  destination_url?: string;
+  qr_type?: 'url' | 'event';
+  design_config?: Record<string, unknown> | null;
+  ga_measurement_id?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  status?: 'active' | 'paused' | 'archived';
 }
 
 export interface DeleteQRRequest {
@@ -248,7 +292,7 @@ export interface APIClient {
 
   // QR
   createQR(req: CreateQRRequest): Promise<CreateQRResponse>;
-  getQRs(): Promise<GetQRsResponse>;
+  getQRs(req?: GetQRsRequest): Promise<GetQRsResponse>;
   getQRById(req: GetQRByIdRequest): Promise<QRCode>;
   updateQR(req: UpdateQRRequest): Promise<QRCode>;
   deleteQR(req: DeleteQRRequest): Promise<void>;

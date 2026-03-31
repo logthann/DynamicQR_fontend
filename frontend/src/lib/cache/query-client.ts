@@ -83,7 +83,8 @@ export const queryKeys = {
   qr: {
     all: [...APP_QUERY_KEY, 'qr'] as const,
     lists: () => [...APP_QUERY_KEY, 'qr', 'list'] as const,
-    list: () => [...APP_QUERY_KEY, 'qr', 'list'] as const,
+    list: (filters?: { campaignId?: string }) =>
+      [...APP_QUERY_KEY, 'qr', 'list', { filters }] as const,
     details: () => [...APP_QUERY_KEY, 'qr', 'detail'] as const,
     detail: (id: string) => [...APP_QUERY_KEY, 'qr', 'detail', id] as const,
   },

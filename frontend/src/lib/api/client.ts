@@ -12,8 +12,27 @@
 
 import axios, { AxiosInstance, AxiosError, AxiosResponse } from 'axios';
 import * as Types from './generated/types';
+import { getAuthContext, getAuthToken } from './auth-fetch';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+const AUTO_REDIRECT_ON_401 = process.env.NEXT_PUBLIC_AUTO_REDIRECT_ON_401 === 'true';
+
+function persistLastAPIError(errorInfo: Record<string, unknown>): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const key = 'dqr:last-api-error';
+    const previousRaw = window.sessionStorage.getItem(key);
+    const previous = previousRaw ? (JSON.parse(previousRaw) as unknown[]) : [];
+    const next = [...previous.slice(-9), errorInfo];
+    window.sessionStorage.setItem(key, JSON.stringify(next));
+    (window as any).__DQR_LAST_API_ERROR__ = errorInfo;
+  } catch {
+    // Best-effort debug storage only.
+  }
+}
 
 /**
  * Normalized error response
@@ -26,6 +45,17 @@ export interface APIError {
 }
 
 type UnknownRecord = Record<string, unknown>;
+
+function toNumericUserId(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
 
 function normalizeCampaign(raw: unknown): Types.Campaign {
   const item = (raw ?? {}) as UnknownRecord;
@@ -50,6 +80,24 @@ function normalizeCampaign(raw: unknown): Types.Campaign {
         : typeof item.end_date === 'string'
           ? item.end_date
           : undefined,
+    googleEventId:
+      typeof item.googleEventId === 'string'
+        ? item.googleEventId
+        : typeof item.google_event_id === 'string'
+          ? item.google_event_id
+          : undefined,
+    calendarSyncStatus:
+      typeof item.calendarSyncStatus === 'string'
+        ? (item.calendarSyncStatus as Types.Campaign['calendarSyncStatus'])
+        : typeof item.calendar_sync_status === 'string'
+          ? (item.calendar_sync_status as Types.Campaign['calendarSyncStatus'])
+          : undefined,
+    calendarLastSyncedAt:
+      typeof item.calendarLastSyncedAt === 'string'
+        ? item.calendarLastSyncedAt
+        : typeof item.calendar_last_synced_at === 'string'
+          ? item.calendar_last_synced_at
+          : undefined,
     createdAt: String(item.createdAt ?? item.created_at ?? new Date().toISOString()),
     updatedAt: String(item.updatedAt ?? item.updated_at ?? new Date().toISOString()),
   };
@@ -57,23 +105,51 @@ function normalizeCampaign(raw: unknown): Types.Campaign {
 
 function normalizeQRCode(raw: unknown): Types.QRCode {
   const item = (raw ?? {}) as UnknownRecord;
+  const destinationUrl = String(item.destination_url ?? item.destinationUrl ?? item.url ?? item.target_url ?? '');
+  const qrTypeRaw = String(item.qr_type ?? item.qrType ?? 'url');
+  const qrType: 'url' | 'event' = qrTypeRaw === 'event' ? 'event' : 'url';
+  const campaignIdRaw = item.campaign_id ?? item.campaignId;
 
   return {
     id: String(item.id ?? item.qr_id ?? ''),
-    campaignId: String(item.campaignId ?? item.campaign_id ?? ''),
+    name: String(item.name ?? ''),
+    campaign_id:
+      typeof campaignIdRaw === 'number'
+        ? campaignIdRaw
+        : typeof campaignIdRaw === 'string' && campaignIdRaw.length > 0
+          ? Number(campaignIdRaw)
+          : null,
+    campaignId: String(campaignIdRaw ?? ''),
+    destination_url: destinationUrl,
+    destinationUrl,
+    qr_type: qrType,
+    qrType,
+    design_config:
+      typeof item.design_config === 'object' && item.design_config !== null
+        ? (item.design_config as Record<string, unknown>)
+        : null,
+    ga_measurement_id:
+      typeof item.ga_measurement_id === 'string' ? item.ga_measurement_id : undefined,
+    utm_source: typeof item.utm_source === 'string' ? item.utm_source : undefined,
+    utm_medium: typeof item.utm_medium === 'string' ? item.utm_medium : undefined,
+    utm_campaign: typeof item.utm_campaign === 'string' ? item.utm_campaign : undefined,
     shortCode: String(item.shortCode ?? item.short_code ?? ''),
-    url: String(item.url ?? item.target_url ?? ''),
+    short_code: typeof item.short_code === 'string' ? item.short_code : undefined,
+    user_id: typeof item.user_id === 'number' ? item.user_id : undefined,
+    deleted_at: typeof item.deleted_at === 'string' ? item.deleted_at : null,
     status:
       typeof item.status === 'string'
         ? (item.status as Types.QRCode['status'])
         : undefined,
     createdAt: String(item.createdAt ?? item.created_at ?? new Date().toISOString()),
+    created_at: typeof item.created_at === 'string' ? item.created_at : undefined,
     updatedAt:
       typeof item.updatedAt === 'string'
         ? item.updatedAt
         : typeof item.updated_at === 'string'
           ? item.updated_at
           : undefined,
+    updated_at: typeof item.updated_at === 'string' ? item.updated_at : undefined,
   };
 }
 
@@ -138,15 +214,6 @@ function normalizeCampaignListResponse(raw: unknown): Types.GetCampaignsResponse
   return { campaigns, total };
 }
 
-function getAuthTokenFromCookie(): string | null {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-
-  const match = document.cookie.match(/(?:^|; )auth_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 /**
  * Create and configure typed API client instance
  */
@@ -165,13 +232,33 @@ export function createAPIClient(): AxiosInstance {
    * Request interceptor - log outgoing requests
    */
   client.interceptors.request.use((config) => {
-    const token = getAuthTokenFromCookie();
+    const token = getAuthToken();
+    const authContext = getAuthContext();
     if (token) {
       config.headers = config.headers ?? {};
       (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
     }
 
+    config.headers = config.headers ?? {};
+    const headerBag = config.headers as Record<string, string>;
+    if (authContext.userId !== undefined) {
+      headerBag['x-user-id'] = String(authContext.userId);
+    }
+    if (authContext.role) {
+      headerBag['x-role'] = authContext.role;
+    }
+    if (authContext.companyName) {
+      headerBag['x-company-name'] = authContext.companyName;
+    }
+
     if (process.env.NODE_ENV === 'development') {
+      const hasBearer = Boolean((config.headers as Record<string, string> | undefined)?.Authorization);
+      const tokenParts = token ? token.split('.').length : 0;
+      console.log(`[API] auth header attached: ${hasBearer ? 'yes' : 'no'}`);
+      console.log(`[API] token format: ${token ? (tokenParts === 3 ? 'jwt-like' : 'non-jwt') : 'missing'}`);
+      console.log(
+        `[API] auth context headers: user=${authContext.userId ?? 'n/a'} role=${authContext.role ?? 'n/a'} company=${authContext.companyName ?? 'n/a'}`
+      );
       console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
     }
     return config;
@@ -200,13 +287,27 @@ export function createAPIClient(): AxiosInstance {
       };
 
       console.error(`[API] ✗ ${status} ${error.config?.url}`, apiError);
+      persistLastAPIError({
+        at: new Date().toISOString(),
+        method: error.config?.method,
+        url: error.config?.url,
+        baseURL: error.config?.baseURL,
+        status,
+        requestHeaders: error.config?.headers,
+        responseData: errorData,
+        normalized: apiError,
+      });
 
       // Handle 401 Unauthorized
       if (status === 401) {
         console.warn('[API] 401 Unauthorized - token expired or invalid');
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && AUTO_REDIRECT_ON_401) {
           // Client-side redirect only
           window.location.href = '/login?reason=expired';
+        } else {
+          console.warn(
+            '[API_DEBUG] Auto redirect on 401 is disabled. Read sessionStorage key "dqr:last-api-error" for full details.'
+          );
         }
       }
 
@@ -343,7 +444,17 @@ export const apiClient = {
    */
   async createQR(req: Types.CreateQRRequest): Promise<Types.CreateQRResponse> {
     try {
-      const response = await getAPIClient().post('/qr', req);
+      const authContext = getAuthContext();
+      const contextOwnerUserId = toNumericUserId(authContext.userId);
+      const requestOwnerUserId =
+        typeof req.owner_user_id === 'number' ? req.owner_user_id : contextOwnerUserId;
+      const { owner_user_id: _ignoredOwnerUserId, ...payload } = req;
+
+      const response = await getAPIClient().post('/qr/', payload, {
+        params: {
+          ...(typeof requestOwnerUserId === 'number' ? { owner_user_id: requestOwnerUserId } : {}),
+        },
+      });
       return normalizeQRCode(response.data);
     } catch (error) {
       throw error;
@@ -354,9 +465,23 @@ export const apiClient = {
    * QR - List
    * GET /api/v1/qr
    */
-  async getQRs(): Promise<Types.GetQRsResponse> {
+  async getQRs(req?: Types.GetQRsRequest): Promise<Types.GetQRsResponse> {
     try {
-      const response = await getAPIClient().get('/qr');
+      const authContext = getAuthContext();
+      const contextOwnerUserId = toNumericUserId(authContext.userId);
+      const requestOwnerUserId =
+        typeof req?.owner_user_id === 'number' ? req.owner_user_id : contextOwnerUserId;
+
+      const response = await getAPIClient().get('/qr/', {
+        params: {
+          ...(typeof requestOwnerUserId === 'number' ? { owner_user_id: requestOwnerUserId } : {}),
+          ...(typeof req?.campaign_id === 'number' ? { campaign_id: req.campaign_id } : {}),
+          ...(req?.status_filter ? { status_filter: req.status_filter } : {}),
+          ...(typeof req?.include_deleted === 'boolean' ? { include_deleted: req.include_deleted } : {}),
+          ...(typeof req?.limit === 'number' ? { limit: req.limit } : {}),
+          ...(typeof req?.offset === 'number' ? { offset: req.offset } : {}),
+        },
+      });
       return normalizeQRListResponse(response.data);
     } catch (error) {
       throw error;

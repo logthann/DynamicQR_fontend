@@ -93,8 +93,8 @@ export default function QRDetail({ qrId }: QRDetailProps) {
 
   const formDefaults = useMemo(
     () => ({
-      campaignId: qr?.campaignId || '',
-      url: qr?.url || '',
+      campaignId: qr?.campaign_id ? String(qr.campaign_id) : '',
+      destinationUrl: qr?.destination_url || '',
       status: qr?.status || 'active',
     }),
     [qr]
@@ -121,8 +121,13 @@ export default function QRDetail({ qrId }: QRDetailProps) {
       </div>
 
       <article className="rounded-md border border-muted p-4">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Name</p>
+        <p className="mt-2 break-all text-sm text-foreground">{qr.name || '-'}</p>
+      </article>
+
+      <article className="rounded-md border border-muted p-4">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Destination URL</p>
-        <p className="mt-2 break-all text-sm text-foreground">{qr.url}</p>
+        <p className="mt-2 break-all text-sm text-foreground">{qr.destination_url}</p>
       </article>
 
       {isEditing && (
@@ -133,17 +138,17 @@ export default function QRDetail({ qrId }: QRDetailProps) {
             const form = event.currentTarget;
             const formData = new FormData(form);
             const campaignId = String(formData.get('campaign_id') || '').trim();
-            const url = String(formData.get('url') || '').trim();
+            const destinationUrl = String(formData.get('destination_url') || '').trim();
 
-            if (!url) {
+            if (!destinationUrl) {
               setErrorMessage('Destination URL is required.');
               return;
             }
 
             updateQRMutation.mutate({
               qrId,
-              campaignId: campaignId || undefined,
-              url,
+              campaign_id: campaignId ? Number(campaignId) : undefined,
+              destination_url: destinationUrl,
             });
           }}
         >
@@ -162,9 +167,9 @@ export default function QRDetail({ qrId }: QRDetailProps) {
           <label className="block text-sm text-foreground">
             Destination URL
             <input
-              name="url"
+              name="destination_url"
               type="url"
-              defaultValue={formDefaults.url}
+              defaultValue={formDefaults.destinationUrl}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
               required
             />

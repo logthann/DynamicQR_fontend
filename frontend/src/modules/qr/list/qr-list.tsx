@@ -83,7 +83,7 @@ function QRCard({ qr }: { qr: QRCode }) {
         <h3 className="text-sm font-medium text-foreground group-hover:text-primary">
           /q/{qr.shortCode}
         </h3>
-        <p className="line-clamp-2 text-sm text-muted-foreground">{qr.url}</p>
+        <p className="line-clamp-2 text-sm text-muted-foreground">{qr.destination_url}</p>
         <div className="flex items-center justify-between pt-1">
           <span className="text-xs text-muted-foreground">
             {new Date(qr.createdAt).toLocaleDateString()}

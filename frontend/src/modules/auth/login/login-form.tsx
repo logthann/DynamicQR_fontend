@@ -20,7 +20,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { apiClient } from '@/lib/api/client';
-import { setAuthToken } from '@/lib/api/auth-fetch';
+import { setAuthContext, setAuthToken } from '@/lib/api/auth-fetch';
+import { queryClient } from '@/lib/cache/query-client';
 import type { LoginRequest } from '@/lib/api/generated/types';
 
 /**
@@ -74,6 +75,28 @@ export default function LoginForm() {
       if (typeof token === 'string' && token.length > 0) {
         setAuthToken(token);
       }
+
+      const responseUser = (response as any)?.user || {};
+      const responseRole =
+        (response as any)?.role ??
+        responseUser?.role ??
+        (response as any)?.user_role;
+      const responseCompany =
+        (response as any)?.company_name ??
+        (response as any)?.companyName ??
+        responseUser?.company_name ??
+        responseUser?.companyName;
+      const responseUserIdRaw = responseUser?.id ?? (response as any)?.user_id;
+      const parsedUserId = Number(responseUserIdRaw);
+
+      setAuthContext({
+        ...(Number.isFinite(parsedUserId) ? { userId: parsedUserId } : {}),
+        ...(typeof responseRole === 'string' ? { role: responseRole } : {}),
+        ...(typeof responseCompany === 'string' ? { companyName: responseCompany } : {}),
+      });
+
+      // Prevent stale data from previous account/session causing RBAC mismatches.
+      queryClient.clear();
 
       // If backend auth succeeded, continue to protected navigation.
       router.replace(redirectPath);
