@@ -8,7 +8,15 @@
  *   const data = await authFetch('/api/v1/campaigns', { method: 'GET' });
  */
 
-import { cookies } from 'next/headers';
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = document.cookie.match(new RegExp(`(?:^|; )${escapedName}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 /**
  * Enhanced fetch options with auth
@@ -22,9 +30,7 @@ export interface AuthFetchOptions extends RequestInit {
  */
 export function getAuthToken(): string | null {
   try {
-    const cookieStore = cookies();
-    const token = cookieStore.get('auth_token')?.value;
-    return token || null;
+    return readCookie('auth_token');
   } catch (error) {
     console.error('[AUTH-FETCH] Error reading auth token:', error);
     return null;
@@ -36,14 +42,12 @@ export function getAuthToken(): string | null {
  */
 export function setAuthToken(token: string): void {
   try {
-    const cookieStore = cookies();
-    cookieStore.set('auth_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 86400 * 7, // 7 days
-      path: '/',
-    });
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    document.cookie = `auth_token=${encodeURIComponent(token)}; Path=/; Max-Age=${86400 * 7}; SameSite=Lax${secure}`;
   } catch (error) {
     console.error('[AUTH-FETCH] Error setting auth token:', error);
   }
@@ -54,8 +58,10 @@ export function setAuthToken(token: string): void {
  */
 export function clearAuthToken(): void {
   try {
-    const cookieStore = cookies();
-    cookieStore.delete('auth_token');
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.cookie = 'auth_token=; Path=/; Max-Age=0; SameSite=Lax';
   } catch (error) {
     console.error('[AUTH-FETCH] Error clearing auth token:', error);
   }

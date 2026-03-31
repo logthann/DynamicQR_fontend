@@ -25,7 +25,7 @@ const queryClientConfig: QueryClientConfig = {
       retry: 1, // Retry once on failure
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       refetchOnWindowFocus: false, // Don't refetch on window focus by default
-      refetchOnReconnect: 'stale', // Refetch stale queries when reconnecting
+      refetchOnReconnect: true, // Refetch stale queries when reconnecting
     },
     mutations: {
       retry: 1,
@@ -59,51 +59,54 @@ export const queryClient = new QueryClient(queryClientConfig);
  *
  * Follows TanStack Query best practices for query key structure
  */
+const APP_QUERY_KEY = ['app'] as const;
+
 export const queryKeys = {
-  all: ['app'] as const,
+  all: APP_QUERY_KEY,
 
   // Auth
   auth: {
-    all: [...queryKeys.all, 'auth'] as const,
-    me: [...queryKeys.auth.all, 'me'] as const,
+    all: [...APP_QUERY_KEY, 'auth'] as const,
+    me: [...APP_QUERY_KEY, 'auth', 'me'] as const,
   },
 
   // Campaigns
   campaigns: {
-    all: [...queryKeys.all, 'campaigns'] as const,
-    lists: () => [...queryKeys.campaigns.all, 'list'] as const,
-    list: (filters?: any) => [...queryKeys.campaigns.lists(), { filters }] as const,
-    details: () => [...queryKeys.campaigns.all, 'detail'] as const,
-    detail: (id: string) => [...queryKeys.campaigns.details(), id] as const,
+    all: [...APP_QUERY_KEY, 'campaigns'] as const,
+    lists: () => [...APP_QUERY_KEY, 'campaigns', 'list'] as const,
+    list: (filters?: any) => [...APP_QUERY_KEY, 'campaigns', 'list', { filters }] as const,
+    details: () => [...APP_QUERY_KEY, 'campaigns', 'detail'] as const,
+    detail: (id: string) => [...APP_QUERY_KEY, 'campaigns', 'detail', id] as const,
   },
 
   // QR Codes
   qr: {
-    all: [...queryKeys.all, 'qr'] as const,
-    lists: () => [...queryKeys.qr.all, 'list'] as const,
-    list: () => [...queryKeys.qr.lists()] as const,
-    details: () => [...queryKeys.qr.all, 'detail'] as const,
-    detail: (id: string) => [...queryKeys.qr.details(), id] as const,
+    all: [...APP_QUERY_KEY, 'qr'] as const,
+    lists: () => [...APP_QUERY_KEY, 'qr', 'list'] as const,
+    list: () => [...APP_QUERY_KEY, 'qr', 'list'] as const,
+    details: () => [...APP_QUERY_KEY, 'qr', 'detail'] as const,
+    detail: (id: string) => [...APP_QUERY_KEY, 'qr', 'detail', id] as const,
   },
 
   // Analytics
   analytics: {
-    all: [...queryKeys.all, 'analytics'] as const,
-    lists: () => [...queryKeys.analytics.all, 'list'] as const,
+    all: [...APP_QUERY_KEY, 'analytics'] as const,
+    lists: () => [...APP_QUERY_KEY, 'analytics', 'list'] as const,
     list: (qrId: string, filters?: any) =>
-      [...queryKeys.analytics.lists(), { qrId, filters }] as const,
-    summaries: () => [...queryKeys.analytics.all, 'summary'] as const,
+      [...APP_QUERY_KEY, 'analytics', 'list', { qrId, filters }] as const,
+    summaries: () => [...APP_QUERY_KEY, 'analytics', 'summary'] as const,
     summary: (qrId: string, startDate?: string, endDate?: string) =>
-      [...queryKeys.analytics.summaries(), { qrId, startDate, endDate }] as const,
+      [...APP_QUERY_KEY, 'analytics', 'summary', { qrId, startDate, endDate }] as const,
   },
 
   // Integrations
   integrations: {
-    all: [...queryKeys.all, 'integrations'] as const,
+    all: [...APP_QUERY_KEY, 'integrations'] as const,
+    status: () => [...APP_QUERY_KEY, 'integrations', 'status'] as const,
     calendar: {
-      all: [...queryKeys.integrations.all, 'calendar'] as const,
+      all: [...APP_QUERY_KEY, 'integrations', 'calendar'] as const,
       events: (year: number, month?: number) =>
-        [...queryKeys.integrations.calendar.all, 'events', { year, month }] as const,
+        [...APP_QUERY_KEY, 'integrations', 'calendar', 'events', { year, month }] as const,
     },
   },
 };
@@ -130,6 +133,17 @@ export const cacheInvalidations = {
   createQR: () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.qr.lists() });
   },
+  updateQR: (qrId: string) => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.qr.detail(qrId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.qr.lists() });
+  },
+  updateQRStatus: (qrId: string) => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.qr.detail(qrId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.qr.lists() });
+  },
+  deleteQR: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.qr.lists() });
+  },
 
   // Calendar sync mutations invalidate calendar events + campaigns
   syncCampaignToCalendar: (campaignId: string) => {
@@ -143,6 +157,20 @@ export const cacheInvalidations = {
   importCampaignsFromCalendar: () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.lists() });
     queryClient.invalidateQueries({ queryKey: queryKeys.integrations.calendar.all });
+  },
+
+  // Integration provider mutations invalidate integration status
+  connectIntegrationProvider: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.integrations.status() });
+  },
+  callbackIntegrationProvider: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.integrations.status() });
+  },
+  refreshIntegrationProvider: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.integrations.status() });
+  },
+  disconnectIntegrationProvider: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.integrations.status() });
   },
 };
 

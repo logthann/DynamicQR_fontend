@@ -4,7 +4,9 @@
  * Protected route: /campaigns/create
  */
 
-import CreateCampaignForm from './create-campaign-form';
+import CreateCampaignForm from '@/modules/campaigns/create/create-campaign-form';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Create Campaign | Dynamic QR',

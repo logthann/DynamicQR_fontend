@@ -6,7 +6,7 @@
  */
 
 import { chromium } from 'playwright';
-import { injectAxe, checkA11y } from 'axe-playwright';
+import { injectAxe, getAxeResults } from 'axe-playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -28,12 +28,7 @@ async function checkPage(page: any, url: string): Promise<WCAGResult> {
   await page.goto(url, { waitUntil: 'networkidle' });
   await injectAxe(page);
 
-  const results = await checkA11y(page, null, {
-    detailedReport: true,
-    detailedReportOptions: {
-      html: true,
-    },
-  });
+  const results = await getAxeResults(page);
 
   return {
     page: url,

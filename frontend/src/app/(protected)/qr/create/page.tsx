@@ -4,7 +4,9 @@
  * Protected route: /qr/create
  */
 
-import CreateQRForm from './create-qr-form';
+import CreateQRForm from '@/modules/qr/create/create-qr-form';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Create QR Code | Dynamic QR',

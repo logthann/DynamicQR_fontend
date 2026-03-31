@@ -23,7 +23,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { apiClient } from '@/lib/api/client';
 import { queryKeys, staleTimes } from '@/lib/cache/query-client';
-import type { CreateQRRequest } from '@/lib/api/generated/types';
+import type { Campaign, CreateQRRequest } from '@/lib/api/generated/types';
 
 /**
  * Validation schema for create QR form
@@ -144,7 +144,7 @@ export default function CreateQRForm() {
                 className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
               >
                 <option value="">Select a campaign...</option>
-                {campaignsResponse?.campaigns?.map((campaign) => (
+                {campaignsResponse?.campaigns?.map((campaign: Campaign) => (
                   <option key={campaign.id} value={campaign.id}>
                     {campaign.name}
                   </option>

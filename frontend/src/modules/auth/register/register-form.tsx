@@ -29,7 +29,8 @@ const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirmPassword: z.string(),
-  name: z.string().min(2, 'Name must be at least 2 characters').optional(),
+  companyName: z.string().min(2, 'Company name must be at least 2 characters'),
+  role: z.enum(['user', 'agency', 'admin']),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'Passwords do not match',
   path: ['confirmPassword'],
@@ -61,7 +62,8 @@ export default function RegisterForm() {
       const registerRequest: RegisterRequest = {
         email: data.email,
         password: data.password,
-        name: data.name,
+        company_name: data.companyName,
+        role: data.role,
       };
 
       const response = await apiClient.register(registerRequest);
@@ -89,20 +91,40 @@ export default function RegisterForm() {
         </p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          {/* Name Field */}
+          {/* Company Name Field */}
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-foreground">
-              Full Name (Optional)
+            <label htmlFor="companyName" className="block text-sm font-medium text-foreground">
+              Company Name
             </label>
             <input
-              id="name"
+              id="companyName"
               type="text"
-              {...register('name')}
+              {...register('companyName')}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="John Doe"
+              placeholder="Acme Inc"
             />
-            {errors.name && (
-              <p className="mt-1 text-sm text-destructive">{errors.name.message}</p>
+            {errors.companyName && (
+              <p className="mt-1 text-sm text-destructive">{errors.companyName.message}</p>
+            )}
+          </div>
+
+          {/* Role Field */}
+          <div>
+            <label htmlFor="role" className="block text-sm font-medium text-foreground">
+              Role
+            </label>
+            <select
+              id="role"
+              {...register('role')}
+              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              defaultValue="user"
+            >
+              <option value="user">User</option>
+              <option value="agency">Agency</option>
+              <option value="admin">Admin</option>
+            </select>
+            {errors.role && (
+              <p className="mt-1 text-sm text-destructive">{errors.role.message}</p>
             )}
           </div>
 

@@ -5,7 +5,7 @@
  * Displays register form for new users
  */
 
-import RegisterForm from './register-form';
+import RegisterForm from '@/modules/auth/register/register-form';
 
 export default function RegisterPage() {
   return <RegisterForm />;

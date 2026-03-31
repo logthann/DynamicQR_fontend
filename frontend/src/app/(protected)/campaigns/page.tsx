@@ -5,7 +5,9 @@
  * Displays campaign list
  */
 
-import CampaignList from './campaign-list';
+import CampaignList from '@/modules/campaigns/list/campaign-list';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Campaigns | Dynamic QR',

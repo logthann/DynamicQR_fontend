@@ -5,7 +5,7 @@
 /* Pure Black Theme Styles */
 
 * {
-  @apply border-border;
+  @apply border-muted;
 }
 
 html {

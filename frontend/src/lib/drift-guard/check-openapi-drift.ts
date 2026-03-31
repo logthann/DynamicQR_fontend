@@ -1,16 +1,16 @@
 /**
  * OpenAPI Drift Guard
- * 
+ *
  * Detects breaking changes in backend contract before implementation tasks execute.
  * Baseline: specs/frontend-app/contracts/openapi.yaml (or backend_infomation/contracts/openapi.yaml)
  * Current: specs/frontend-app/contracts/openapi.yaml
- * 
+ *
  * Checks:
  * - Removed or renamed paths/methods
  * - Breaking request schema changes (required field additions, type narrowing, enum removals)
  * - Breaking response schema changes used by frontend modules
  * - Security/auth contract mismatches (public to protected or scope/role changes)
- * 
+ *
  * Gate Behavior:
  * - FAIL on breaking changes; block task execution until resolved
  * - WARN on additive/non-breaking changes; regenerate + review
@@ -47,7 +47,7 @@ function loadOpenAPISpec(filePath: string): OpenAPISpec {
 /**
  * Compare baseline and current OpenAPI specifications
  */
-function compareSpecs(baseline: OpenAPISpec, current: OpenAPISpec): DriftReport {
+export function compareSpecs(baseline: OpenAPISpec, current: OpenAPISpec): DriftReport {
   const breakingChanges: string[] = [];
   const warnings: string[] = [];
 
@@ -132,7 +132,7 @@ function compareSpecs(baseline: OpenAPISpec, current: OpenAPISpec): DriftReport 
 function writeDriftReport(report: DriftReport, reportPath: string): void {
   const reportContent = `# OpenAPI Drift Guard Report
 
-**Generated**: ${report.timestamp}  
+**Generated**: ${report.timestamp}
 **Status**: ${report.status}
 
 ## Comparison
@@ -152,6 +152,7 @@ ${report.status === 'WARN' ? '- **Action**: Review warnings and regenerate typed
 ${report.status === 'PASS' ? '- **Action**: Proceed with implementation' : ''}
 `;
 
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, reportContent, 'utf-8');
 }
 
@@ -160,22 +161,25 @@ ${report.status === 'PASS' ? '- **Action**: Proceed with implementation' : ''}
  */
 export async function checkDrift(): Promise<DriftReport> {
   try {
-    const baselinePath = path.resolve(__dirname, '../../../specs/frontend-app/contracts/openapi.yaml');
-    const currentPath = path.resolve(__dirname, '../../../specs/frontend-app/contracts/openapi.yaml');
+    const canonicalPath = path.resolve(
+      __dirname,
+      '../../../../backend_infomation/contracts/openapi.yaml'
+    );
+    const mirrorPath = path.resolve(__dirname, '../../../../specs/frontend-app/contracts/openapi.yaml');
 
-    if (!fs.existsSync(baselinePath)) {
-      throw new Error(`Baseline contract not found: ${baselinePath}`);
+    if (!fs.existsSync(canonicalPath)) {
+      throw new Error(`Canonical contract not found: ${canonicalPath}`);
     }
-    if (!fs.existsSync(currentPath)) {
-      throw new Error(`Current contract not found: ${currentPath}`);
+    if (!fs.existsSync(mirrorPath)) {
+      throw new Error(`Mirror contract not found: ${mirrorPath}`);
     }
 
-    const baseline = loadOpenAPISpec(baselinePath);
-    const current = loadOpenAPISpec(currentPath);
+    const baseline = loadOpenAPISpec(canonicalPath);
+    const current = loadOpenAPISpec(mirrorPath);
 
     const report = compareSpecs(baseline, current);
 
-    const reportPath = path.resolve(__dirname, '../../../frontend/reports/openapi-drift-report.md');
+    const reportPath = path.resolve(__dirname, '../../../reports/openapi-drift-report.md');
     writeDriftReport(report, reportPath);
 
     console.log(`[DRIFT GUARD] Report written to: ${reportPath}`);

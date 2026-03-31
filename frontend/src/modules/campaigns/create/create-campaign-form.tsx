@@ -29,7 +29,13 @@ import type { CreateCampaignRequest } from '@/lib/api/generated/types';
  */
 const createCampaignSchema = z.object({
   name: z.string().min(3, 'Campaign name must be at least 3 characters'),
+  status: z.enum(['active', 'paused', 'draft']),
   description: z.string().optional(),
+  start_date: z.string().min(1, 'Start date is required'),
+  end_date: z.string().min(1, 'End date is required'),
+}).refine((data) => data.end_date >= data.start_date, {
+  message: 'End date must be on or after start date',
+  path: ['end_date'],
 });
 
 type CreateCampaignFormData = z.infer<typeof createCampaignSchema>;
@@ -44,6 +50,9 @@ export default function CreateCampaignForm() {
     formState: { errors },
   } = useForm<CreateCampaignFormData>({
     resolver: zodResolver(createCampaignSchema),
+    defaultValues: {
+      status: 'active',
+    },
   });
 
   /**
@@ -54,7 +63,7 @@ export default function CreateCampaignForm() {
     mutationFn: async (data: CreateCampaignRequest) => {
       return await apiClient.createCampaign(data);
     },
-    onSuccess: (campaign) => {
+    onSuccess: () => {
       // AC-004: Invalidate campaigns list cache after mutation
       cacheInvalidations.createCampaign();
 
@@ -76,7 +85,10 @@ export default function CreateCampaignForm() {
     setError(null);
     const createRequest: CreateCampaignRequest = {
       name: data.name,
-      description: data.description,
+      status: data.status,
+      description: data.description?.trim() || undefined,
+      start_date: data.start_date,
+      end_date: data.end_date,
     };
     createMutation.mutate(createRequest);
   };
@@ -126,6 +138,57 @@ export default function CreateCampaignForm() {
             {errors.description && (
               <p className="mt-1 text-sm text-destructive">{errors.description.message}</p>
             )}
+          </div>
+
+          {/* Status Field */}
+          <div>
+            <label htmlFor="status" className="block text-sm font-medium text-foreground">
+              Status
+            </label>
+            <select
+              id="status"
+              {...register('status')}
+              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="draft">Draft</option>
+            </select>
+            {errors.status && (
+              <p className="mt-1 text-sm text-destructive">{errors.status.message}</p>
+            )}
+          </div>
+
+          {/* Date Range */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="start_date" className="block text-sm font-medium text-foreground">
+                Start Date
+              </label>
+              <input
+                id="start_date"
+                type="date"
+                {...register('start_date')}
+                className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              {errors.start_date && (
+                <p className="mt-1 text-sm text-destructive">{errors.start_date.message}</p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="end_date" className="block text-sm font-medium text-foreground">
+                End Date
+              </label>
+              <input
+                id="end_date"
+                type="date"
+                {...register('end_date')}
+                className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              {errors.end_date && (
+                <p className="mt-1 text-sm text-destructive">{errors.end_date.message}</p>
+              )}
+            </div>
           </div>
 
           {/* Error Message */}

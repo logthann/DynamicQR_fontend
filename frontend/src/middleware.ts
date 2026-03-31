@@ -9,6 +9,35 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+function isTokenLikelyValid(token: string | undefined): boolean {
+  if (!token) {
+    return false;
+  }
+
+  // JWT format: header.payload.signature
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    return false;
+  }
+
+  try {
+    const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payloadBase64.padEnd(Math.ceil(payloadBase64.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded)) as { exp?: number };
+
+    // If exp exists, consider token invalid once expired.
+    if (typeof payload.exp === 'number') {
+      const nowInSeconds = Math.floor(Date.now() / 1000);
+      return payload.exp > nowInSeconds;
+    }
+
+    // No exp claim: treat as present/valid and let backend be source of truth.
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Protected route groups
  */
@@ -32,11 +61,6 @@ const PUBLIC_ROUTES = [
 ];
 
 /**
- * Redirect routes that should not be accessed by authenticated users
- */
-const REDIRECT_TO_HOME_IF_AUTHENTICATED = ['/login', '/register'];
-
-/**
  * Middleware function
  */
 export function middleware(request: NextRequest): NextResponse {
@@ -44,24 +68,28 @@ export function middleware(request: NextRequest): NextResponse {
 
   // Check if user has auth token
   const authToken = request.cookies.get('auth_token')?.value;
+  const hasValidAuth = isTokenLikelyValid(authToken);
+
 
   // Allow public routes
   if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
     return NextResponse.next();
   }
 
-  // Redirect authenticated users away from login/register
-  if (authToken && REDIRECT_TO_HOME_IF_AUTHENTICATED.some((route) => pathname === route)) {
-    return NextResponse.redirect(new URL('/', request.url));
-  }
-
   // Protect authenticated routes
   if (PROTECTED_ROUTES.some((route) => pathname.startsWith(route))) {
-    if (!authToken) {
+    if (!hasValidAuth) {
       // Redirect to login if not authenticated
       const loginUrl = new URL('/login', request.url);
       loginUrl.searchParams.set('redirect', pathname);
-      return NextResponse.redirect(loginUrl);
+      const response = NextResponse.redirect(loginUrl);
+
+      // Remove stale token so login page is reachable on next request.
+      if (authToken) {
+        response.cookies.set('auth_token', '', { path: '/', maxAge: 0 });
+      }
+
+      return response;
     }
 
     // Token exists - verify it's not expired (basic check)

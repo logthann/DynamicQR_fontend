@@ -209,8 +209,10 @@ test.describe('User Story 2 - RBAC Route/Action Behavior', () => {
 
     // Verify new campaign appears (or list updated)
     // This may show in cache or require page refresh
-    const campaigns = page.locator('h3.text-lg').all();
-    const campaignNames = await Promise.all(campaigns.map(c => c.textContent()));
+    const campaignLocators = await page.locator('h3.text-lg').all();
+    const campaignNames = await Promise.all(
+      campaignLocators.map((campaignLocator) => campaignLocator.textContent())
+    );
 
     // At least list is showing content
     expect(campaignNames.length).toBeGreaterThan(0);

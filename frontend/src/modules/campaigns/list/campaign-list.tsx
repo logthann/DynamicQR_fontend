@@ -14,7 +14,6 @@
 
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
@@ -22,7 +21,6 @@ import { queryKeys, staleTimes } from '@/lib/cache/query-client';
 import type { Campaign } from '@/lib/api/generated/types';
 
 export default function CampaignList() {
-  const [isCreating, setIsCreating] = useState(false);
 
   // Query campaigns with 30s stale time (interactive view)
   const {
@@ -110,6 +108,8 @@ export default function CampaignList() {
  * Campaign Card Component
  */
 function CampaignCard({ campaign }: { campaign: Campaign }) {
+  const statusLabel = (campaign.status || 'active').replace('_', ' ');
+
   return (
     <Link
       href={`/campaigns/${campaign.id}`}
@@ -127,7 +127,7 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
             Created {new Date(campaign.createdAt).toLocaleDateString()}
           </span>
           <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-            Active
+            {statusLabel}
           </span>
         </div>
       </div>

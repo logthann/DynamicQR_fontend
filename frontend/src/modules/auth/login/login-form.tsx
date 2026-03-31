@@ -65,14 +65,19 @@ export default function LoginForm() {
 
       const response = await apiClient.login(loginRequest);
 
-      // Store JWT token in HttpOnly cookie (server-side)
-      if (response.token) {
-        setAuthToken(response.token);
+      // Support common token field variants from different backend serializers.
+      const token =
+        (response as any)?.token ??
+        (response as any)?.access_token ??
+        (response as any)?.accessToken;
 
-        // Bootstrap protected navigation
-        // Server sets the cookie, client redirects to protected route
-        router.push(redirectPath);
+      if (typeof token === 'string' && token.length > 0) {
+        setAuthToken(token);
       }
+
+      // If backend auth succeeded, continue to protected navigation.
+      router.replace(redirectPath);
+      router.refresh();
     } catch (err: any) {
       console.error('[LOGIN] Error:', err);
       setError(
