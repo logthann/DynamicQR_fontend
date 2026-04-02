@@ -6,18 +6,14 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
 import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
-import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
 import CampaignQRManager from '@/modules/campaigns/detail/campaign-qr-manager';
 import { useIntegrationContext } from '@/state/integration-context';
-
-const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
-const PENDING_SYNC_CAMPAIGN_KEY = 'dqr:pending-sync-campaign-id';
 
 interface CampaignDetailProps {
   campaignId: string;
@@ -70,49 +66,34 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
       void refetchIntegrations();
       setErrorMessage(null);
       setCalendarActionMessage('Campaign synced to Google Calendar successfully.');
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
-      }
     },
-    onError: async (err: any) => {
-      if (err?.status === 400) {
-        try {
-          const redirectUri = getGoogleOAuthRedirectUri();
-          const result = await apiClient.startIntegrationConnect({ provider: 'google_calendar', redirectUri });
-          setErrorMessage(null);
-          setCalendarActionMessage(
-            'Google Calendar is not connected yet. Redirecting to Google OAuth to complete connection...'
-          );
-          if (typeof window !== 'undefined') {
-            window.sessionStorage.setItem(OAUTH_RETURN_PATH_KEY, window.location.pathname + window.location.search);
-            window.sessionStorage.setItem(PENDING_SYNC_CAMPAIGN_KEY, campaignId);
-            window.location.assign(result.authorizationUrl);
-            return;
-          }
-        } catch (connectErr: any) {
-          setErrorMessage(connectErr?.message || 'Failed to start Google Calendar OAuth flow.');
-          return;
-        }
-      }
-
+    onError: (err: any) => {
       setErrorMessage(err?.message || 'Failed to sync campaign to calendar.');
     },
   });
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const pendingCampaignId = window.sessionStorage.getItem(PENDING_SYNC_CAMPAIGN_KEY);
-    if (pendingCampaignId !== campaignId || syncCampaignMutation.isPending) {
-      return;
-    }
-
-    window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
-    setCalendarActionMessage('Google account connected. Finishing campaign sync...');
-    syncCampaignMutation.mutate({ campaignId });
-  }, [campaignId, syncCampaignMutation]);
+  const unlinkCampaignMutation = useMutation({
+    mutationFn: apiClient.unlinkCampaign,
+    onSuccess: async () => {
+      cacheInvalidations.unlinkCampaignFromCalendar(campaignId);
+      // Keep campaign + integration views synchronized after unlink.
+      if (campaign?.status) {
+        try {
+          await apiClient.updateCampaign({ campaignId, status: campaign.status });
+          cacheInvalidations.updateCampaign(campaignId);
+        } catch {
+          // Unlink is already successful; do not fail UI if status patch is rejected.
+        }
+      }
+      await campaignQuery.refetch();
+      await refetchIntegrations();
+      setErrorMessage(null);
+      setCalendarActionMessage('Campaign removed from Google Calendar.');
+    },
+    onError: (err: any) => {
+      setErrorMessage(err?.message || 'Failed to remove campaign from calendar.');
+    },
+  });
 
   if (campaignQuery.isLoading) {
     return (
@@ -145,8 +126,12 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   }
 
   const campaign = campaignQuery.data;
-  const isGoogleCalendarConnected = isGoogleConnected || Boolean(campaign?.googleEventId);
-  const isCalendarActionPending = syncCampaignMutation.isPending;
+  const calendarSyncStatus = campaign?.calendarSyncStatus || 'not_linked';
+  const isCampaignSynced =
+    calendarSyncStatus === 'synced' ||
+    calendarSyncStatus === 'out_of_sync' ||
+    Boolean(campaign?.googleEventId);
+  const isCalendarActionPending = syncCampaignMutation.isPending || unlinkCampaignMutation.isPending;
 
   const formDefaults = {
     name: campaign?.name || '',
@@ -206,24 +191,26 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Google Calendar</p>
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
-              {(campaign.calendarSyncStatus || 'not_linked').replace('_', ' ')}
+              {calendarSyncStatus.replace('_', ' ')}
             </span>
             <span
               className={`inline-flex items-center rounded-full border px-2 py-1 text-xs ${
-                isGoogleCalendarConnected
+                isGoogleConnected
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
                   : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
               }`}
             >
-              {isGoogleCalendarConnected ? 'calendar linked' : 'not linked yet'}
+              {isGoogleConnected ? 'oauth connected' : 'oauth not connected'}
             </span>
           </div>
         </div>
 
         <p className="text-sm text-muted-foreground">
-          {campaign.googleEventId
+          {isCampaignSynced && campaign.googleEventId
             ? `Linked event ID: ${campaign.googleEventId}`
-            : 'This campaign is not linked to Google Calendar yet.'}
+            : isCampaignSynced
+              ? 'This campaign is synced to Google Calendar.'
+              : 'This campaign is not synced to Google Calendar yet.'}
         </p>
 
         {campaign.calendarLastSyncedAt && (
@@ -233,14 +220,38 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
         )}
 
         <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            disabled={isCalendarActionPending}
-            onClick={() => syncCampaignMutation.mutate({ campaignId })}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {syncCampaignMutation.isPending ? 'Syncing...' : 'Sync to Google Calendar'}
-          </button>
+          {isGoogleConnected && !isCampaignSynced && (
+            <button
+              type="button"
+              disabled={isCalendarActionPending}
+              onClick={() => syncCampaignMutation.mutate({ campaignId })}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {syncCampaignMutation.isPending ? 'Syncing...' : 'Sync to Google Calendar'}
+            </button>
+          )}
+
+          {isGoogleConnected && isCampaignSynced && (
+            <button
+              type="button"
+              disabled={isCalendarActionPending}
+              onClick={() => {
+                if (!window.confirm('Remove this campaign from Google Calendar?')) {
+                  return;
+                }
+                unlinkCampaignMutation.mutate({ campaignId });
+              }}
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
+            >
+              {unlinkCampaignMutation.isPending ? 'Removing...' : 'Remove from Calendar'}
+            </button>
+          )}
+
+          {!isGoogleConnected && (
+            <p className="text-sm text-muted-foreground">
+              Connect Google Calendar from Dashboard Integrations to enable sync actions.
+            </p>
+          )}
         </div>
 
         {calendarActionMessage && (

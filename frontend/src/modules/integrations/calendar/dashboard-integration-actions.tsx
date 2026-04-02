@@ -69,7 +69,11 @@ export default function DashboardIntegrationActions({
   const filteredCampaigns = useMemo(() => {
     const all = campaignsQuery.data?.campaigns ?? [];
     if (mode === 'sync') {
-      return all.filter((campaign) => (campaign.calendarSyncStatus ?? 'not_linked') === 'not_linked');
+      return all.filter((campaign) => {
+        const syncStatus = campaign.calendarSyncStatus ?? 'not_linked';
+        // A previously unlinked campaign must be available for re-sync.
+        return syncStatus === 'not_linked' || syncStatus === 'removed';
+      });
     }
     if (mode === 'remove') {
       return all.filter(

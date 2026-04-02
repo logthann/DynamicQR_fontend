@@ -15,19 +15,18 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
 import { cacheInvalidations, queryClient, queryKeys, staleTimes } from '@/lib/cache/query-client';
-import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
 import type { Campaign } from '@/lib/api/generated/types';
-
-const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
-const PENDING_SYNC_CAMPAIGN_KEY = 'dqr:pending-sync-campaign-id';
 
 export default function CampaignList() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused' | 'draft' | 'archived'>('all');
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'this_month' | 'this_year' | 'custom'>('all');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   // Query campaigns with 30s stale time (interactive view)
   const {
@@ -43,86 +42,61 @@ export default function CampaignList() {
 
   const campaigns = response?.campaigns || [];
 
-  const syncMutation = useMutation({
-    mutationFn: apiClient.syncCampaign,
-    onSuccess: (_, variables) => {
-      cacheInvalidations.syncCampaignToCalendar(variables.campaignId);
-      queryClient.refetchQueries({ queryKey: queryKeys.campaigns.all });
-      setActionMessage('Synced campaign to Google Calendar successfully.');
-      setActiveCampaignId(null);
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
-      }
+  const deleteMutation = useMutation({
+    mutationFn: apiClient.deleteCampaign,
+    onSuccess: () => {
+      cacheInvalidations.deleteCampaign();
+      queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+      setActionMessage('Campaign deleted successfully.');
     },
-    onError: async (err: any, variables) => {
-      if (err?.status === 400) {
-        try {
-          const redirectUri = getGoogleOAuthRedirectUri();
-          const result = await apiClient.startIntegrationConnect({
-            provider: 'google_calendar',
-            redirectUri,
-          });
+    onError: (err: any) => {
+      setActionMessage(err?.message || 'Failed to delete campaign.');
+    },
+  });
 
-          if (typeof window !== 'undefined') {
-            window.sessionStorage.setItem(
-              OAUTH_RETURN_PATH_KEY,
-              window.location.pathname + window.location.search
-            );
-            window.sessionStorage.setItem(PENDING_SYNC_CAMPAIGN_KEY, variables.campaignId);
-            window.location.assign(result.authorizationUrl);
-            return;
-          }
-        } catch (connectErr: any) {
-          setActionMessage(connectErr?.message || 'Failed to start Google OAuth flow.');
-          setActiveCampaignId(null);
-          return;
+  const filteredCampaigns = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    return campaigns.filter((campaign) => {
+      if (statusFilter !== 'all' && campaign.status !== statusFilter) {
+        return false;
+      }
+
+      const campaignStartDate = campaign.startDate ? new Date(campaign.startDate) : null;
+      if (!campaignStartDate || Number.isNaN(campaignStartDate.getTime())) {
+        return periodFilter === 'all' && !fromDate && !toDate;
+      }
+
+      if (periodFilter === 'today' && campaignStartDate < startOfToday) {
+        return false;
+      }
+      if (periodFilter === 'this_month' && campaignStartDate < startOfMonth) {
+        return false;
+      }
+      if (periodFilter === 'this_year' && campaignStartDate < startOfYear) {
+        return false;
+      }
+
+      if (fromDate) {
+        const from = new Date(fromDate);
+        if (campaignStartDate < from) {
+          return false;
         }
       }
 
-      setActionMessage(err?.message || 'Failed to sync campaign to calendar.');
-      setActiveCampaignId(null);
-    },
-  });
+      if (toDate) {
+        const to = new Date(toDate);
+        if (campaignStartDate > to) {
+          return false;
+        }
+      }
 
-  const unlinkMutation = useMutation({
-    mutationFn: apiClient.unlinkCampaign,
-    onSuccess: (_, variables) => {
-      cacheInvalidations.unlinkCampaignFromCalendar(variables.campaignId);
-      queryClient.refetchQueries({ queryKey: queryKeys.campaigns.all });
-      setActionMessage('Removed campaign from Google Calendar successfully.');
-      setActiveCampaignId(null);
-    },
-    onError: (err: any) => {
-      setActionMessage(err?.message || 'Failed to remove campaign from calendar.');
-      setActiveCampaignId(null);
-    },
-  });
-
-  const busyAction = useMemo(() => {
-    if (syncMutation.isPending) {
-      return 'sync';
-    }
-    if (unlinkMutation.isPending) {
-      return 'unlink';
-    }
-    return null;
-  }, [syncMutation.isPending, unlinkMutation.isPending]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const pendingCampaignId = window.sessionStorage.getItem(PENDING_SYNC_CAMPAIGN_KEY);
-    if (!pendingCampaignId || syncMutation.isPending) {
-      return;
-    }
-
-    window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
-    setActionMessage('Google account connected. Finishing campaign sync...');
-    setActiveCampaignId(pendingCampaignId);
-    syncMutation.mutate({ campaignId: pendingCampaignId });
-  }, [syncMutation]);
+      return true;
+    });
+  }, [campaigns, fromDate, periodFilter, statusFilter, toDate]);
 
   /**
    * AC-003: List campaigns from GET /api/v1/campaigns
@@ -147,6 +121,58 @@ export default function CampaignList() {
         </div>
       </div>
 
+      <div className="grid gap-3 rounded-lg border border-muted bg-card p-4 md:grid-cols-4">
+        <label className="text-xs text-muted-foreground">
+          Status
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
+          >
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="draft">Draft</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+
+        <label className="text-xs text-muted-foreground">
+          Period
+          <select
+            value={periodFilter}
+            onChange={(event) => setPeriodFilter(event.target.value as typeof periodFilter)}
+            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
+          >
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="this_month">This month</option>
+            <option value="this_year">This year</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </label>
+
+        <label className="text-xs text-muted-foreground">
+          From
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(event) => setFromDate(event.target.value)}
+            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
+          />
+        </label>
+
+        <label className="text-xs text-muted-foreground">
+          To
+          <input
+            type="date"
+            value={toDate}
+            onChange={(event) => setToDate(event.target.value)}
+            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
+          />
+        </label>
+      </div>
+
       {/* Loading State */}
       {isLoading && (
         <div className="rounded-lg border border-muted bg-card p-8 text-center">
@@ -167,7 +193,7 @@ export default function CampaignList() {
       )}
 
       {/* Empty State */}
-      {!isLoading && !isError && campaigns.length === 0 && (
+      {!isLoading && !isError && filteredCampaigns.length === 0 && (
         <div className="rounded-lg border border-dashed border-muted bg-card p-8 text-center">
           <h3 className="text-lg font-medium text-foreground">No campaigns yet</h3>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -183,23 +209,20 @@ export default function CampaignList() {
       )}
 
       {/* Campaign Grid */}
-      {!isLoading && !isError && campaigns.length > 0 && (
+      {!isLoading && !isError && filteredCampaigns.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {campaigns.map((campaign: Campaign) => (
+          {filteredCampaigns.map((campaign: Campaign) => (
             <CampaignCard
               key={campaign.id}
               campaign={campaign}
-              isSyncing={busyAction === 'sync' && activeCampaignId === campaign.id}
-              isUnlinking={busyAction === 'unlink' && activeCampaignId === campaign.id}
-              onSync={(campaignId) => {
+              isDeleting={deleteMutation.isPending}
+              onDelete={(campaignId) => {
+                const confirmed = window.confirm('Delete this campaign? This action cannot be undone.');
+                if (!confirmed) {
+                  return;
+                }
                 setActionMessage(null);
-                setActiveCampaignId(campaignId);
-                syncMutation.mutate({ campaignId });
-              }}
-              onUnlink={(campaignId) => {
-                setActionMessage(null);
-                setActiveCampaignId(campaignId);
-                unlinkMutation.mutate({ campaignId });
+                deleteMutation.mutate({ campaignId });
               }}
             />
           ))}
@@ -220,20 +243,23 @@ export default function CampaignList() {
  */
 function CampaignCard({
   campaign,
-  onSync,
-  onUnlink,
-  isSyncing,
-  isUnlinking,
+  onDelete,
+  isDeleting,
 }: {
   campaign: Campaign;
-  onSync: (campaignId: string) => void;
-  onUnlink: (campaignId: string) => void;
-  isSyncing: boolean;
-  isUnlinking: boolean;
+  onDelete: (campaignId: string) => void;
+  isDeleting: boolean;
 }) {
   const statusLabel = (campaign.status || 'active').replace('_', ' ');
   const calendarStatus = campaign.calendarSyncStatus || 'not_linked';
-  const isSynced = calendarStatus === 'synced';
+  const isLinked =
+    Boolean(campaign.googleEventId) ||
+    calendarStatus === 'synced' ||
+    calendarStatus === 'out_of_sync';
+
+  const campaignRecord = campaign as unknown as Record<string, unknown>;
+  const qrCountValue = campaignRecord.qrCount ?? campaignRecord.qr_count;
+  const qrCount = typeof qrCountValue === 'number' ? qrCountValue : null;
 
   return (
     <article className="rounded-lg border border-muted bg-card p-4 transition-all hover:border-primary hover:shadow-md">
@@ -247,37 +273,31 @@ function CampaignCard({
       </Link>
 
       <div className="mt-4 space-y-3 border-t border-muted pt-3">
+        <div className="grid gap-1 text-xs text-muted-foreground">
+          <span>Start: {campaign.startDate || '-'}</span>
+          <span>End: {campaign.endDate || '-'}</span>
+          <span>QR codes: {qrCount ?? 'N/A'}</span>
+        </div>
+
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-muted-foreground">Calendar status</span>
           <span
             className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-              isSynced
-                ? 'bg-primary/10 text-primary'
-                : calendarStatus === 'out_of_sync'
-                  ? 'bg-amber-500/15 text-amber-300'
-                  : 'bg-muted text-muted-foreground'
+              isLinked ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
             }`}
           >
-            {calendarStatus.replace('_', ' ')}
+            {isLinked ? 'Linked' : 'Not linked'}
           </span>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex justify-end">
           <button
             type="button"
-            disabled={isSyncing || isUnlinking}
-            onClick={() => onSync(campaign.id)}
-            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            disabled={isDeleting}
+            onClick={() => onDelete(campaign.id)}
+            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
           >
-            {isSyncing ? 'Syncing...' : 'Sync Calendar'}
-          </button>
-          <button
-            type="button"
-            disabled={isSyncing || isUnlinking || !campaign.googleEventId}
-            onClick={() => onUnlink(campaign.id)}
-            className="rounded-md border border-muted bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            {isUnlinking ? 'Removing...' : 'Unlink'}
+            {isDeleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
       </div>
