@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
 import { queryClient, queryKeys, staleTimes } from '@/lib/cache/query-client';
+import { getAuthToken } from '@/lib/api/auth-fetch';
 import type { IntegrationProvider } from '@/lib/api/generated/types';
 
 export default function IntegrationStatusPanel() {
@@ -22,6 +23,7 @@ export default function IntegrationStatusPanel() {
     queryKey: queryKeys.integrations.all,
     queryFn: () => apiClient.getIntegrations(),
     staleTime: staleTimes.calendarEvents,
+    enabled: Boolean(getAuthToken()),
   });
 
   const refreshMutation = useMutation({
@@ -135,4 +137,3 @@ export default function IntegrationStatusPanel() {
     </section>
   );
 }
-

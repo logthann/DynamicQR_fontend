@@ -7,9 +7,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
-import { cacheInvalidations } from '@/lib/cache/query-client';
+import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
+import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
+import { getAuthToken } from '@/lib/api/auth-fetch';
 
 type IntegrationState =
   | 'idle'
@@ -27,10 +29,47 @@ function toIntegrationErrorState(error: unknown): IntegrationState {
   return maybeError?.status === 403 ? 'permission_blocked' : 'recoverable_error';
 }
 
+const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
+
 export default function CalendarSyncActions() {
   const [campaignId, setCampaignId] = useState('');
   const [state, setState] = useState<IntegrationState>('idle');
   const [message, setMessage] = useState('No action executed.');
+
+  const integrationsQuery = useQuery({
+    queryKey: queryKeys.integrations.all,
+    queryFn: () => apiClient.getIntegrations(),
+    staleTime: staleTimes.calendarEvents,
+    enabled: Boolean(getAuthToken()),
+  });
+
+  const isGoogleCalendarConnected = Boolean(
+    integrationsQuery.data?.integrations?.find((provider) => provider.provider === 'google_calendar')
+      ?.connected
+  );
+
+  const connectMutation = useMutation({
+    mutationFn: () => {
+      const redirectUri = getGoogleOAuthRedirectUri();
+      return apiClient.startIntegrationConnect({ provider: 'google_calendar', redirectUri });
+    },
+    onMutate: () => {
+      setState('pending');
+      setMessage('Opening Google OAuth...');
+    },
+    onSuccess: (result) => {
+      setState('success');
+      setMessage('Redirecting to Google OAuth. Approve access and return to continue sync.');
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(OAUTH_RETURN_PATH_KEY, window.location.pathname + window.location.search);
+        window.location.assign(result.authorizationUrl);
+      }
+    },
+    onError: (error: any) => {
+      setState(toIntegrationErrorState(error));
+      setMessage(error?.message || 'Failed to start Google OAuth.');
+    },
+  });
 
   const syncMutation = useMutation({
     mutationFn: () => apiClient.syncCampaign({ campaignId }),
@@ -47,7 +86,9 @@ export default function CalendarSyncActions() {
       const nextState = toIntegrationErrorState(error);
       setState(nextState);
       setMessage(
-        nextState === 'permission_blocked'
+        (error as any)?.status === 400
+          ? 'Sync rejected by backend. Connect Google Calendar first, then retry.'
+          : nextState === 'permission_blocked'
           ? 'Permission blocked. Cannot sync this campaign.'
           : 'Sync failed. Please retry.'
       );
@@ -76,7 +117,7 @@ export default function CalendarSyncActions() {
     },
   });
 
-  const isPending = syncMutation.isPending || unlinkMutation.isPending;
+  const isPending = syncMutation.isPending || unlinkMutation.isPending || connectMutation.isPending;
 
   return (
     <section className="space-y-4 rounded-lg border border-muted bg-card p-6">
@@ -93,15 +134,44 @@ export default function CalendarSyncActions() {
         />
       </label>
 
-      <div className="flex gap-3">
+      <div className="rounded-md border border-muted p-3 text-xs text-muted-foreground">
+        Google Calendar provider:{' '}
+        <span className={isGoogleCalendarConnected ? 'text-emerald-400' : 'text-amber-300'}>
+          {isGoogleCalendarConnected ? 'connected' : 'not connected'}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        {!isGoogleCalendarConnected && (
+          <button
+            data-testid="calendar-connect-trigger"
+            type="button"
+            disabled={isPending}
+            onClick={() => connectMutation.mutate()}
+            className="rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+          >
+            {connectMutation.isPending ? 'Opening OAuth...' : 'Connect Google Calendar'}
+          </button>
+        )}
+
         <button
           data-testid="sync-trigger"
           type="button"
           disabled={!campaignId || isPending}
-          onClick={() => syncMutation.mutate()}
+          onClick={() => {
+            if (!isGoogleCalendarConnected) {
+              connectMutation.mutate();
+              return;
+            }
+            syncMutation.mutate();
+          }}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          {syncMutation.isPending ? 'Syncing...' : 'Sync Campaign'}
+          {syncMutation.isPending
+            ? 'Syncing...'
+            : isGoogleCalendarConnected
+              ? 'Sync Campaign'
+              : 'Connect & Sync'}
         </button>
 
         <button
@@ -122,4 +192,3 @@ export default function CalendarSyncActions() {
     </section>
   );
 }
-

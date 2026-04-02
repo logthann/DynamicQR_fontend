@@ -1,9 +1,8 @@
 /**
- * Integrations Page
- * Protected route: /integrations
+ * Legacy integrations route compatibility page.
  */
 
-import IntegrationsDashboard from '@/modules/integrations/calendar/integrations-dashboard';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +12,6 @@ export const metadata = {
 };
 
 export default function IntegrationsPage() {
-  return <IntegrationsDashboard />;
+  redirect('/dashboard?tab=integrations');
 }
 

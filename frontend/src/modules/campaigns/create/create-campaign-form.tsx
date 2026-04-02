@@ -67,8 +67,8 @@ export default function CreateCampaignForm() {
       // AC-004: Invalidate campaigns list cache after mutation
       cacheInvalidations.createCampaign();
 
-      // Redirect to campaigns list
-      router.push('/campaigns');
+      // Redirect to dashboard campaigns tab
+      router.push('/dashboard?tab=campaigns');
     },
     onError: (err: any) => {
       console.error('[CREATE_CAMPAIGN] Error:', err);

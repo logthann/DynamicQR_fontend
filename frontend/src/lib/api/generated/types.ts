@@ -185,6 +185,11 @@ export interface CalendarEvent {
   description?: string;
   startTime: string;
   endTime: string;
+  googleEventId?: string;
+  eventStatus?: string;
+  linkedCampaignId?: number | null;
+  calendarSyncStatus?: 'not_linked' | 'synced' | 'out_of_sync' | 'removed';
+  lastSyncedAt?: string | null;
 }
 
 export interface GetCalendarEventsRequest {
@@ -194,17 +199,29 @@ export interface GetCalendarEventsRequest {
 }
 
 export interface GetCalendarEventsResponse {
+  rangeType?: 'month' | 'year';
+  year?: number;
+  month?: number;
+  total?: number;
   events: CalendarEvent[];
 }
 
 export interface ImportCampaignsRequest {
-  selectedEventIds: string[];
+  selectedEventIds?: string[];
+  rangeType?: 'month' | 'year';
+  year?: number;
+  month?: number;
+  eventIds?: string[];
 }
 
 export interface ImportCampaignsResponse {
   created: number;
   updated: number;
   skipped: number;
+  createdCount?: number;
+  updatedCount?: number;
+  skippedCount?: number;
+  campaigns?: Campaign[];
 }
 
 export type IntegrationProvider = 'google_calendar' | 'google_analytics';
@@ -221,6 +238,7 @@ export interface GetIntegrationsResponse {
 
 export interface StartIntegrationConnectRequest {
   provider: IntegrationProvider;
+  redirectUri?: string;
 }
 
 export interface StartIntegrationConnectResponse {
@@ -232,6 +250,7 @@ export interface IntegrationCallbackRequest {
   provider: IntegrationProvider;
   code: string;
   state: string;
+  redirectUri?: string;
 }
 
 export interface IntegrationCallbackResponse {
@@ -259,6 +278,7 @@ export interface SyncCampaignRequest {
 export interface SyncCampaignResponse {
   status: 'idle' | 'pending' | 'success' | 'recoverable_error' | 'permission_blocked';
   message?: string;
+  campaign?: Campaign;
 }
 
 export interface UnlinkCampaignRequest {
@@ -268,6 +288,7 @@ export interface UnlinkCampaignRequest {
 export interface UnlinkCampaignResponse {
   status: 'success' | 'error';
   message?: string;
+  campaign?: Campaign;
 }
 
 // Error Response

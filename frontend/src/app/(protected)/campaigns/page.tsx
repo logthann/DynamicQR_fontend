@@ -1,11 +1,10 @@
 /**
- * Campaigns Page
+ * Legacy campaigns route compatibility page.
  *
- * Protected route: /campaigns
- * Displays campaign list
+ * Keeps old route working by forwarding to dashboard campaigns tab.
  */
 
-import CampaignList from '@/modules/campaigns/list/campaign-list';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,10 +14,6 @@ export const metadata = {
 };
 
 export default function CampaignsPage() {
-  return (
-    <div className="space-y-6">
-      <CampaignList />
-    </div>
-  );
+  redirect('/dashboard?tab=campaigns');
 }
 

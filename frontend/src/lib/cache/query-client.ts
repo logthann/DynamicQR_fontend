@@ -149,10 +149,12 @@ export const cacheInvalidations = {
   // Calendar sync mutations invalidate calendar events + campaigns
   syncCampaignToCalendar: (campaignId: string) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.detail(campaignId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.lists() });
     queryClient.invalidateQueries({ queryKey: queryKeys.integrations.calendar.all });
   },
   unlinkCampaignFromCalendar: (campaignId: string) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.detail(campaignId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.lists() });
     queryClient.invalidateQueries({ queryKey: queryKeys.integrations.calendar.all });
   },
   importCampaignsFromCalendar: () => {

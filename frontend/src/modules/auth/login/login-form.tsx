@@ -40,7 +40,7 @@ export default function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const redirectPath = searchParams.get('redirect') || '/campaigns';
+  const redirectPath = searchParams.get('redirect') || '/dashboard';
   const registered = searchParams.get('registered');
 
   const {

@@ -43,6 +43,7 @@ function isTokenLikelyValid(token: string | undefined): boolean {
  */
 const PROTECTED_ROUTES = [
   '/campaigns',
+  '/campaign-detail',
   '/qr',
   '/analytics',
   '/integrations',

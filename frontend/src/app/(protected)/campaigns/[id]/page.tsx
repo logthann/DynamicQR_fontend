@@ -1,10 +1,10 @@
 /**
- * Campaign Detail Page
+ * Legacy campaign detail route compatibility page.
  *
- * Protected route: /campaigns/[id]
+ * Forwards old path to the new route-first path.
  */
 
-import CampaignDetail from '@/modules/campaigns/detail/campaign-detail';
+import { redirect } from 'next/navigation';
 
 interface CampaignDetailPageProps {
   params: {
@@ -15,6 +15,6 @@ interface CampaignDetailPageProps {
 export const dynamic = 'force-dynamic';
 
 export default function CampaignDetailPage({ params }: CampaignDetailPageProps) {
-  return <CampaignDetail campaignId={params.id} />;
+  redirect(`/campaign-detail/${params.id}`);
 }
 

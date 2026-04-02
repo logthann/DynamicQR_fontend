@@ -15,11 +15,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
-import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
+import { cacheInvalidations, queryClient, queryKeys, staleTimes } from '@/lib/cache/query-client';
+import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
 import type { Campaign } from '@/lib/api/generated/types';
+
+const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
+const PENDING_SYNC_CAMPAIGN_KEY = 'dqr:pending-sync-campaign-id';
 
 export default function CampaignList() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -43,10 +47,38 @@ export default function CampaignList() {
     mutationFn: apiClient.syncCampaign,
     onSuccess: (_, variables) => {
       cacheInvalidations.syncCampaignToCalendar(variables.campaignId);
+      queryClient.refetchQueries({ queryKey: queryKeys.campaigns.all });
       setActionMessage('Synced campaign to Google Calendar successfully.');
       setActiveCampaignId(null);
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
+      }
     },
-    onError: (err: any) => {
+    onError: async (err: any, variables) => {
+      if (err?.status === 400) {
+        try {
+          const redirectUri = getGoogleOAuthRedirectUri();
+          const result = await apiClient.startIntegrationConnect({
+            provider: 'google_calendar',
+            redirectUri,
+          });
+
+          if (typeof window !== 'undefined') {
+            window.sessionStorage.setItem(
+              OAUTH_RETURN_PATH_KEY,
+              window.location.pathname + window.location.search
+            );
+            window.sessionStorage.setItem(PENDING_SYNC_CAMPAIGN_KEY, variables.campaignId);
+            window.location.assign(result.authorizationUrl);
+            return;
+          }
+        } catch (connectErr: any) {
+          setActionMessage(connectErr?.message || 'Failed to start Google OAuth flow.');
+          setActiveCampaignId(null);
+          return;
+        }
+      }
+
       setActionMessage(err?.message || 'Failed to sync campaign to calendar.');
       setActiveCampaignId(null);
     },
@@ -56,6 +88,7 @@ export default function CampaignList() {
     mutationFn: apiClient.unlinkCampaign,
     onSuccess: (_, variables) => {
       cacheInvalidations.unlinkCampaignFromCalendar(variables.campaignId);
+      queryClient.refetchQueries({ queryKey: queryKeys.campaigns.all });
       setActionMessage('Removed campaign from Google Calendar successfully.');
       setActiveCampaignId(null);
     },
@@ -75,6 +108,22 @@ export default function CampaignList() {
     return null;
   }, [syncMutation.isPending, unlinkMutation.isPending]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const pendingCampaignId = window.sessionStorage.getItem(PENDING_SYNC_CAMPAIGN_KEY);
+    if (!pendingCampaignId || syncMutation.isPending) {
+      return;
+    }
+
+    window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
+    setActionMessage('Google account connected. Finishing campaign sync...');
+    setActiveCampaignId(pendingCampaignId);
+    syncMutation.mutate({ campaignId: pendingCampaignId });
+  }, [syncMutation]);
+
   /**
    * AC-003: List campaigns from GET /api/v1/campaigns
    */
@@ -85,15 +134,17 @@ export default function CampaignList() {
         <div>
           <h1 className="text-3xl font-bold text-foreground">Campaigns</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Manage your QR campaigns and track performance
+            Manage your campaigns from dashboard and open campaign detail for deep actions.
           </p>
         </div>
-        <Link
-          href="/campaigns/create"
-          className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          Create Campaign
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/campaigns/create"
+            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            Create Campaign
+          </Link>
+        </div>
       </div>
 
       {/* Loading State */}
@@ -186,7 +237,7 @@ function CampaignCard({
 
   return (
     <article className="rounded-lg border border-muted bg-card p-4 transition-all hover:border-primary hover:shadow-md">
-      <Link href={`/campaigns/${campaign.id}`} className="group block space-y-2">
+      <Link href={`/campaign-detail/${campaign.id}`} className="group block space-y-2">
         <h3 className="text-lg font-medium text-foreground group-hover:text-primary">{campaign.name}</h3>
         {campaign.description && <p className="text-sm text-muted-foreground">{campaign.description}</p>}
         <div className="flex items-center justify-between pt-2">
@@ -233,4 +284,3 @@ function CampaignCard({
     </article>
   );
 }
-

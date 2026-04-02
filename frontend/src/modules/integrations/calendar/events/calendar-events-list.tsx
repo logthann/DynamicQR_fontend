@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
 import { queryKeys, staleTimes } from '@/lib/cache/query-client';
@@ -13,20 +13,49 @@ import { queryKeys, staleTimes } from '@/lib/cache/query-client';
 interface CalendarEventsListProps {
   selectedEventIds: string[];
   onSelectionChange: (ids: string[]) => void;
+  calendarQuery: {
+    rangeType: 'month' | 'year';
+    year: number;
+    month?: number;
+    fromMonth?: number;
+    toMonth?: number;
+  };
+  onCalendarQueryChange: (next: {
+    rangeType: 'month' | 'year';
+    year: number;
+    month?: number;
+    fromMonth?: number;
+    toMonth?: number;
+  }) => void;
+}
+
+function formatEventDate(value?: string): string {
+  if (!value) {
+    return 'N/A';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return `Invalid date (${value})`;
+  }
+  return parsed.toLocaleString();
 }
 
 export default function CalendarEventsList({
   selectedEventIds,
   onSelectionChange,
+  calendarQuery,
+  onCalendarQueryChange,
 }: CalendarEventsListProps) {
-  const now = new Date();
-  const [rangeType, setRangeType] = useState<'month' | 'year'>('month');
-  const [year, setYear] = useState<number>(now.getFullYear());
-  const [month, setMonth] = useState<number>(now.getMonth() + 1);
+  const { rangeType, year, month = new Date().getMonth() + 1, fromMonth, toMonth } = calendarQuery;
 
   const queryKey = useMemo(
-    () => [...queryKeys.integrations.calendar.all, 'events', { rangeType, year, month }] as const,
-    [rangeType, year, month]
+    () =>
+      [
+        ...queryKeys.integrations.calendar.all,
+        'events',
+        { rangeType, year, month, fromMonth, toMonth },
+      ] as const,
+    [rangeType, year, month, fromMonth, toMonth]
   );
 
   const eventsQuery = useQuery({
@@ -36,6 +65,9 @@ export default function CalendarEventsList({
         rangeType,
         year,
         month: rangeType === 'month' ? month : undefined,
+        ...(rangeType === 'month' && typeof fromMonth === 'number' && typeof toMonth === 'number'
+          ? { fromMonth, toMonth }
+          : {}),
       }),
     staleTime: staleTimes.calendarEvents,
   });
@@ -64,7 +96,12 @@ export default function CalendarEventsList({
             data-testid="calendar-range-type"
             className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
             value={rangeType}
-            onChange={(e) => setRangeType(e.target.value as 'month' | 'year')}
+            onChange={(e) =>
+              onCalendarQueryChange({
+                ...calendarQuery,
+                rangeType: e.target.value as 'month' | 'year',
+              })
+            }
           >
             <option value="month">Month</option>
             <option value="year">Year</option>
@@ -78,7 +115,12 @@ export default function CalendarEventsList({
             type="number"
             className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
             value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
+            onChange={(e) =>
+              onCalendarQueryChange({
+                ...calendarQuery,
+                year: Number(e.target.value),
+              })
+            }
           />
         </label>
 
@@ -92,7 +134,54 @@ export default function CalendarEventsList({
             disabled={rangeType !== 'month'}
             className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground disabled:opacity-40"
             value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
+            onChange={(e) =>
+              onCalendarQueryChange({
+                ...calendarQuery,
+                month: Number(e.target.value),
+              })
+            }
+          />
+        </label>
+
+        <label className="text-sm text-foreground">
+          From month (optional)
+          <input
+            data-testid="calendar-from-month"
+            type="number"
+            min={1}
+            max={12}
+            disabled={rangeType !== 'month'}
+            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground disabled:opacity-40"
+            value={fromMonth ?? ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              onCalendarQueryChange({
+                ...calendarQuery,
+                fromMonth: value ? Number(value) : undefined,
+              });
+            }}
+            placeholder="e.g. 4"
+          />
+        </label>
+
+        <label className="text-sm text-foreground">
+          To month (optional)
+          <input
+            data-testid="calendar-to-month"
+            type="number"
+            min={1}
+            max={12}
+            disabled={rangeType !== 'month'}
+            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground disabled:opacity-40"
+            value={toMonth ?? ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              onCalendarQueryChange({
+                ...calendarQuery,
+                toMonth: value ? Number(value) : undefined,
+              });
+            }}
+            placeholder="e.g. 6"
           />
         </label>
       </div>
@@ -126,8 +215,13 @@ export default function CalendarEventsList({
               <span>
                 <span className="block font-medium">{event.title}</span>
                 <span className="block text-muted-foreground">
-                  {new Date(event.startTime).toLocaleString()} - {new Date(event.endTime).toLocaleString()}
+                  {formatEventDate(event.startTime)} - {formatEventDate(event.endTime)}
                 </span>
+                {event.calendarSyncStatus && (
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Status: {event.calendarSyncStatus.replace('_', ' ')}
+                  </span>
+                )}
               </span>
             </label>
           ))}

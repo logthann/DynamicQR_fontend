@@ -20,6 +20,13 @@ type IntegrationState =
 
 interface ImportCampaignsActionProps {
   selectedEventIds: string[];
+  calendarQuery: {
+    rangeType: 'month' | 'year';
+    year: number;
+    month?: number;
+    fromMonth?: number;
+    toMonth?: number;
+  };
 }
 
 interface ErrorWithStatus {
@@ -35,12 +42,29 @@ function toIntegrationErrorState(error: unknown): IntegrationState {
   return 'recoverable_error';
 }
 
-export default function ImportCampaignsAction({ selectedEventIds }: ImportCampaignsActionProps) {
+export default function ImportCampaignsAction({
+  selectedEventIds,
+  calendarQuery,
+}: ImportCampaignsActionProps) {
   const [state, setState] = useState<IntegrationState>('idle');
   const [message, setMessage] = useState<string>('No import started yet.');
 
   const importMutation = useMutation({
-    mutationFn: () => apiClient.importCampaigns({ selectedEventIds }),
+    mutationFn: () =>
+      apiClient.importCampaigns({
+        rangeType: calendarQuery.rangeType,
+        year: calendarQuery.year,
+        month: calendarQuery.rangeType === 'month' ? calendarQuery.month : undefined,
+        ...(calendarQuery.rangeType === 'month' &&
+        typeof calendarQuery.fromMonth === 'number' &&
+        typeof calendarQuery.toMonth === 'number'
+          ? {
+              fromMonth: calendarQuery.fromMonth,
+              toMonth: calendarQuery.toMonth,
+            }
+          : {}),
+        eventIds: selectedEventIds,
+      }),
     onMutate: () => {
       setState('pending');
       setMessage('Import is running...');
@@ -54,10 +78,14 @@ export default function ImportCampaignsAction({ selectedEventIds }: ImportCampai
     },
     onError: (error) => {
       const nextState = toIntegrationErrorState(error);
+      const maybeError = error as ErrorWithStatus;
       setState(nextState);
       setMessage(
         nextState === 'permission_blocked'
           ? 'Permission blocked. You cannot import campaigns.'
+          : maybeError?.status === 400
+            ? maybeError.message ||
+              'Import rejected by backend. Check range parameters and selected events.'
           : 'Import failed. Please retry.'
       );
     },
@@ -87,4 +115,3 @@ export default function ImportCampaignsAction({ selectedEventIds }: ImportCampai
     </section>
   );
 }
-

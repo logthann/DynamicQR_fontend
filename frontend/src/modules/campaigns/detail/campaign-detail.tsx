@@ -6,13 +6,18 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
 import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
+import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
 import CampaignQRManager from '@/modules/campaigns/detail/campaign-qr-manager';
+import { useIntegrationContext } from '@/state/integration-context';
+
+const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
+const PENDING_SYNC_CAMPAIGN_KEY = 'dqr:pending-sync-campaign-id';
 
 interface CampaignDetailProps {
   campaignId: string;
@@ -20,8 +25,10 @@ interface CampaignDetailProps {
 
 export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   const router = useRouter();
+  const { isGoogleConnected, refetchIntegrations } = useIntegrationContext();
   const [isEditing, setIsEditing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [calendarActionMessage, setCalendarActionMessage] = useState<string | null>(null);
 
   const campaignQuery = useQuery({
     queryKey: queryKeys.campaigns.detail(campaignId),
@@ -29,6 +36,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     staleTime: staleTimes.campaigns,
     retry: false,
   });
+
 
   const updateCampaignMutation = useMutation({
     mutationFn: apiClient.updateCampaign,
@@ -47,7 +55,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     onSuccess: () => {
       cacheInvalidations.deleteCampaign();
       setErrorMessage(null);
-      router.push('/campaigns');
+      router.push('/dashboard');
     },
     onError: (err: any) => {
       setErrorMessage(err?.message || 'Failed to delete campaign.');
@@ -58,23 +66,53 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     mutationFn: apiClient.syncCampaign,
     onSuccess: () => {
       cacheInvalidations.syncCampaignToCalendar(campaignId);
+      void campaignQuery.refetch();
+      void refetchIntegrations();
       setErrorMessage(null);
+      setCalendarActionMessage('Campaign synced to Google Calendar successfully.');
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
+      }
     },
-    onError: (err: any) => {
+    onError: async (err: any) => {
+      if (err?.status === 400) {
+        try {
+          const redirectUri = getGoogleOAuthRedirectUri();
+          const result = await apiClient.startIntegrationConnect({ provider: 'google_calendar', redirectUri });
+          setErrorMessage(null);
+          setCalendarActionMessage(
+            'Google Calendar is not connected yet. Redirecting to Google OAuth to complete connection...'
+          );
+          if (typeof window !== 'undefined') {
+            window.sessionStorage.setItem(OAUTH_RETURN_PATH_KEY, window.location.pathname + window.location.search);
+            window.sessionStorage.setItem(PENDING_SYNC_CAMPAIGN_KEY, campaignId);
+            window.location.assign(result.authorizationUrl);
+            return;
+          }
+        } catch (connectErr: any) {
+          setErrorMessage(connectErr?.message || 'Failed to start Google Calendar OAuth flow.');
+          return;
+        }
+      }
+
       setErrorMessage(err?.message || 'Failed to sync campaign to calendar.');
     },
   });
 
-  const unlinkCampaignMutation = useMutation({
-    mutationFn: apiClient.unlinkCampaign,
-    onSuccess: () => {
-      cacheInvalidations.unlinkCampaignFromCalendar(campaignId);
-      setErrorMessage(null);
-    },
-    onError: (err: any) => {
-      setErrorMessage(err?.message || 'Failed to unlink campaign from calendar.');
-    },
-  });
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const pendingCampaignId = window.sessionStorage.getItem(PENDING_SYNC_CAMPAIGN_KEY);
+    if (pendingCampaignId !== campaignId || syncCampaignMutation.isPending) {
+      return;
+    }
+
+    window.sessionStorage.removeItem(PENDING_SYNC_CAMPAIGN_KEY);
+    setCalendarActionMessage('Google account connected. Finishing campaign sync...');
+    syncCampaignMutation.mutate({ campaignId });
+  }, [campaignId, syncCampaignMutation]);
 
   if (campaignQuery.isLoading) {
     return (
@@ -97,16 +135,18 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
       <div className="space-y-4 rounded-lg border border-destructive/40 bg-destructive/10 p-6">
         <p className="text-sm text-destructive">{message}</p>
         <Link
-          href="/campaigns"
+          href="/dashboard"
           className="inline-flex items-center rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground"
         >
-          Back to Campaigns
+          Back to Dashboard
         </Link>
       </div>
     );
   }
 
   const campaign = campaignQuery.data;
+  const isGoogleCalendarConnected = isGoogleConnected || Boolean(campaign?.googleEventId);
+  const isCalendarActionPending = syncCampaignMutation.isPending;
 
   const formDefaults = {
     name: campaign?.name || '',
@@ -121,10 +161,10 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
       <div className="space-y-4 rounded-lg border border-muted bg-card p-6">
         <p className="text-sm text-muted-foreground">Campaign not found.</p>
         <Link
-          href="/campaigns"
+          href="/dashboard"
           className="inline-flex items-center rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground"
         >
-          Back to Campaigns
+          Back to Dashboard
         </Link>
       </div>
     );
@@ -164,9 +204,20 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
       <article className="space-y-3 rounded-md border border-muted p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Google Calendar</p>
-          <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
-            {(campaign.calendarSyncStatus || 'not_linked').replace('_', ' ')}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
+              {(campaign.calendarSyncStatus || 'not_linked').replace('_', ' ')}
+            </span>
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-1 text-xs ${
+                isGoogleCalendarConnected
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+              }`}
+            >
+              {isGoogleCalendarConnected ? 'calendar linked' : 'not linked yet'}
+            </span>
+          </div>
         </div>
 
         <p className="text-sm text-muted-foreground">
@@ -181,28 +232,20 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
           </p>
         )}
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button
             type="button"
-            disabled={syncCampaignMutation.isPending || unlinkCampaignMutation.isPending}
+            disabled={isCalendarActionPending}
             onClick={() => syncCampaignMutation.mutate({ campaignId })}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            {syncCampaignMutation.isPending ? 'Syncing...' : 'Sync to Calendar'}
-          </button>
-          <button
-            type="button"
-            disabled={
-              syncCampaignMutation.isPending ||
-              unlinkCampaignMutation.isPending ||
-              !campaign.googleEventId
-            }
-            onClick={() => unlinkCampaignMutation.mutate({ campaignId })}
-            className="rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            {unlinkCampaignMutation.isPending ? 'Removing...' : 'Remove from Calendar'}
+            {syncCampaignMutation.isPending ? 'Syncing...' : 'Sync to Google Calendar'}
           </button>
         </div>
+
+        {calendarActionMessage && (
+          <p className="text-sm text-muted-foreground">{calendarActionMessage}</p>
+        )}
       </article>
 
       <CampaignQRManager campaignId={String(campaign.id)} />
@@ -350,10 +393,10 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
           {deleteCampaignMutation.isPending ? 'Deleting...' : 'Delete Campaign'}
         </button>
         <Link
-          href="/campaigns"
+          href="/dashboard"
           className="inline-flex items-center rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
         >
-          Back to Campaigns
+          Back to Dashboard
         </Link>
       </div>
     </section>

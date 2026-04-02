@@ -13,6 +13,7 @@
 import axios, { AxiosInstance, AxiosError, AxiosResponse } from 'axios';
 import * as Types from './generated/types';
 import { getAuthContext, getAuthToken } from './auth-fetch';
+import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 const AUTO_REDIRECT_ON_401 = process.env.NEXT_PUBLIC_AUTO_REDIRECT_ON_401 === 'true';
@@ -101,6 +102,67 @@ function normalizeCampaign(raw: unknown): Types.Campaign {
     createdAt: String(item.createdAt ?? item.created_at ?? new Date().toISOString()),
     updatedAt: String(item.updatedAt ?? item.updated_at ?? new Date().toISOString()),
   };
+}
+
+function looksLikeCampaign(raw: unknown): boolean {
+  const item = (raw ?? {}) as UnknownRecord;
+  return (
+    (typeof item.id === 'number' || typeof item.id === 'string') &&
+    typeof item.name === 'string'
+  );
+}
+
+function normalizeCalendarEvent(raw: unknown): Types.CalendarEvent {
+  const item = (raw ?? {}) as UnknownRecord;
+  const googleEventId = String(item.google_event_id ?? item.event_id ?? item.id ?? '');
+  const startsAt = String(
+    item.starts_at ?? item.start_datetime ?? item.startTime ?? item.start_time ?? ''
+  );
+  const endsAt = String(
+    item.ends_at ?? item.end_datetime ?? item.endTime ?? item.end_time ?? startsAt
+  );
+
+  return {
+    id: googleEventId,
+    googleEventId,
+    title: String(item.title ?? ''),
+    description: typeof item.description === 'string' ? item.description : undefined,
+    startTime: startsAt,
+    endTime: endsAt,
+    eventStatus:
+      typeof item.event_status === 'string'
+        ? item.event_status
+        : typeof item.status === 'string'
+          ? item.status
+          : undefined,
+    linkedCampaignId:
+      typeof item.linked_campaign_id === 'number' ? item.linked_campaign_id : null,
+    calendarSyncStatus:
+      typeof item.calendar_sync_status === 'string'
+        ? (item.calendar_sync_status as Types.CalendarEvent['calendarSyncStatus'])
+        : undefined,
+    lastSyncedAt:
+      typeof item.last_synced_at === 'string' ? item.last_synced_at : undefined,
+  };
+}
+
+function normalizeCalendarEventsResponse(raw: unknown): Types.GetCalendarEventsResponse {
+  const data = (raw ?? {}) as UnknownRecord;
+  const eventsRaw = Array.isArray(data.events) ? data.events : [];
+
+  return {
+    rangeType:
+      typeof data.range_type === 'string'
+        ? (data.range_type as 'month' | 'year')
+        : undefined,
+    year: typeof data.year === 'number' ? data.year : undefined,
+    month: typeof data.month === 'number' ? data.month : undefined,
+    // Keep extra range metadata available for UI code that inspects raw payload.
+    ...(typeof data.from_month === 'number' ? { fromMonth: data.from_month } : {}),
+    ...(typeof data.to_month === 'number' ? { toMonth: data.to_month } : {}),
+    total: typeof data.total === 'number' ? data.total : eventsRaw.length,
+    events: eventsRaw.map((event) => normalizeCalendarEvent(event)),
+  } as Types.GetCalendarEventsResponse;
 }
 
 function normalizeQRCode(raw: unknown): Types.QRCode {
@@ -214,6 +276,29 @@ function normalizeCampaignListResponse(raw: unknown): Types.GetCampaignsResponse
   return { campaigns, total };
 }
 
+function extractAPIErrorMessage(errorData: any, fallback: string): string {
+  if (typeof errorData?.message === 'string' && errorData.message.trim()) {
+    return errorData.message;
+  }
+
+  const detail = errorData?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (typeof first === 'string') {
+      return first;
+    }
+    if (first && typeof first.msg === 'string') {
+      return first.msg;
+    }
+  }
+
+  return fallback;
+}
+
 /**
  * Create and configure typed API client instance
  */
@@ -277,10 +362,12 @@ export function createAPIClient(): AxiosInstance {
     (error: AxiosError) => {
       const status = error.response?.status || 0;
       const errorData = error.response?.data as any;
+      const fallbackMessage = error.message || 'Unknown error';
+      const normalizedMessage = extractAPIErrorMessage(errorData, fallbackMessage);
 
       // Normalize error
       const apiError: APIError = {
-        message: errorData?.message || error.message || 'Unknown error',
+        message: normalizedMessage,
         code: errorData?.code,
         status,
         details: errorData?.details,
@@ -566,10 +653,48 @@ export const apiClient = {
    */
   async getIntegrations(): Promise<Types.GetIntegrationsResponse> {
     try {
-      const response = await getAPIClient().get('/integrations');
-      const data = (response.data ?? {}) as { integrations?: Types.IntegrationStatus[] };
+      // Prefer canonical path first to avoid slash redirects that may drop auth headers.
+      let response;
+      try {
+        response = await getAPIClient().get('/integrations');
+      } catch (firstError: any) {
+        const status = firstError?.status;
+        if (status === 401) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[API] /integrations returned 401; treating as disconnected providers.');
+          }
+          return { integrations: [] };
+        }
+        if (status !== 404 && status !== 405) {
+          throw firstError;
+        }
+        response = await getAPIClient().get('/integrations/');
+      }
+      const body = response.data as unknown;
+      const data = (body ?? {}) as {
+        integrations?: Array<Record<string, unknown>>;
+        providers?: Array<Record<string, unknown>>;
+      };
+      const source =
+        Array.isArray(data.integrations)
+          ? data.integrations
+          : Array.isArray(data.providers)
+            ? data.providers
+            : Array.isArray(body)
+              ? (body as Array<Record<string, unknown>>)
+              : [];
+
       return {
-        integrations: Array.isArray(data.integrations) ? data.integrations : [],
+        integrations: source.map((item) => ({
+          provider: String(item.provider ?? item.provider_name ?? 'google_calendar') as Types.IntegrationProvider,
+          connected: Boolean(item.connected),
+          updatedAt:
+            typeof item.updatedAt === 'string'
+              ? item.updatedAt
+              : typeof item.updated_at === 'string'
+                ? item.updated_at
+                : undefined,
+        })),
       };
     } catch (error) {
       throw error;
@@ -584,8 +709,16 @@ export const apiClient = {
     req: Types.StartIntegrationConnectRequest
   ): Promise<Types.StartIntegrationConnectResponse> {
     try {
-      const response = await getAPIClient().post('/integrations/connect', req);
-      return response.data;
+      const resolvedRedirectUri = req.redirectUri || getGoogleOAuthRedirectUri();
+      const response = await getAPIClient().post('/integrations/connect', {
+        provider_name: req.provider,
+        ...(resolvedRedirectUri ? { redirect_uri: resolvedRedirectUri } : {}),
+      });
+      const data = (response.data ?? {}) as Record<string, unknown>;
+      return {
+        authorizationUrl: String(data.authorization_url ?? data.authorizationUrl ?? ''),
+        state: String(data.state ?? ''),
+      };
     } catch (error) {
       throw error;
     }
@@ -599,8 +732,21 @@ export const apiClient = {
     req: Types.IntegrationCallbackRequest
   ): Promise<Types.IntegrationCallbackResponse> {
     try {
-      const response = await getAPIClient().post('/integrations/callback', req);
-      return response.data;
+      const resolvedRedirectUri = req.redirectUri || getGoogleOAuthRedirectUri();
+      const response = await getAPIClient().post('/integrations/callback', {
+        provider_name: req.provider,
+        code: req.code,
+        state: req.state,
+        ...(resolvedRedirectUri ? { redirect_uri: resolvedRedirectUri } : {}),
+      });
+      const data = (response.data ?? {}) as Record<string, unknown>;
+      return {
+        status:
+          data.status === 'error'
+            ? 'error'
+            : 'success',
+        message: typeof data.message === 'string' ? data.message : undefined,
+      };
     } catch (error) {
       throw error;
     }
@@ -638,17 +784,40 @@ export const apiClient = {
    * GET /api/v1/integrations/google-calendar/events
    */
   async getCalendarEvents(
-    req: Types.GetCalendarEventsRequest
+    req: Types.GetCalendarEventsRequest & {
+      fromMonth?: number;
+      toMonth?: number;
+    }
   ): Promise<Types.GetCalendarEventsResponse> {
     try {
+      const request = req as Types.GetCalendarEventsRequest & {
+        fromMonth?: number;
+        toMonth?: number;
+      };
+
+      const useMonthRange =
+        request.rangeType === 'month' &&
+        typeof request.fromMonth === 'number' &&
+        typeof request.toMonth === 'number';
+
       const response = await getAPIClient().get('/integrations/google-calendar/events', {
         params: {
-          range_type: req.rangeType,
-          year: req.year,
-          month: req.month,
+          range_type: request.rangeType,
+          year: request.year,
+          ...(useMonthRange
+            ? {
+                from_month: request.fromMonth,
+                to_month: request.toMonth,
+              }
+            : request.rangeType === 'month' && typeof request.month === 'number'
+              ? { month: request.month }
+              : {}),
         },
       });
-      return response.data;
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Calendar Events] raw backend response:', response.data);
+      }
+      return normalizeCalendarEventsResponse(response.data);
     } catch (error) {
       throw error;
     }
@@ -659,14 +828,74 @@ export const apiClient = {
    * POST /api/v1/integrations/google-calendar/import-campaigns
    */
   async importCampaigns(
-    req: Types.ImportCampaignsRequest
+    req: Types.ImportCampaignsRequest & {
+      fromMonth?: number;
+      toMonth?: number;
+    }
   ): Promise<Types.ImportCampaignsResponse> {
     try {
+      const request = req as Types.ImportCampaignsRequest & {
+        fromMonth?: number;
+        toMonth?: number;
+      };
+
+      const eventIds =
+        Array.isArray(request.eventIds) && request.eventIds.length > 0
+          ? request.eventIds
+          : Array.isArray(request.selectedEventIds)
+            ? request.selectedEventIds
+            : [];
+
       const response = await getAPIClient().post(
         '/integrations/google-calendar/import-campaigns',
-        req
+        {
+          range_type: request.rangeType,
+          year: request.year,
+          ...(request.rangeType === 'month' && typeof request.month === 'number'
+            ? { month: request.month }
+            : {}),
+          ...(request.rangeType === 'month' &&
+          typeof request.fromMonth === 'number' &&
+          typeof request.toMonth === 'number'
+            ? {
+                from_month: request.fromMonth,
+                to_month: request.toMonth,
+              }
+            : {}),
+          event_ids: eventIds,
+        }
       );
-      return response.data;
+      const data = (response.data ?? {}) as Record<string, unknown>;
+      const created =
+        typeof data.created_count === 'number'
+          ? data.created_count
+          : typeof data.created === 'number'
+            ? data.created
+            : 0;
+      const updated =
+        typeof data.updated_count === 'number'
+          ? data.updated_count
+          : typeof data.updated === 'number'
+            ? data.updated
+            : 0;
+      const skipped =
+        typeof data.skipped_count === 'number'
+          ? data.skipped_count
+          : typeof data.skipped === 'number'
+            ? data.skipped
+            : 0;
+
+      const campaignsRaw = Array.isArray(data.campaigns) ? data.campaigns : [];
+
+      return {
+        created,
+        updated,
+        skipped,
+        createdCount: created,
+        updatedCount: updated,
+        skippedCount: skipped,
+        campaigns: campaignsRaw.map((item) => normalizeCampaign(item)),
+      };
     } catch (error) {
       throw error;
     }
@@ -682,6 +911,13 @@ export const apiClient = {
         `/campaigns/${req.campaignId}/calendar/sync`,
         {}
       );
+      if (looksLikeCampaign(response.data)) {
+        return {
+          status: 'success',
+          message: 'Campaign synchronized with Google Calendar.',
+          campaign: normalizeCampaign(response.data),
+        };
+      }
       return response.data;
     } catch (error) {
       throw error;
@@ -697,6 +933,13 @@ export const apiClient = {
       const response = await getAPIClient().delete(
         `/campaigns/${req.campaignId}/calendar/link`
       );
+      if (looksLikeCampaign(response.data)) {
+        return {
+          status: 'success',
+          message: 'Campaign unlinked from Google Calendar.',
+          campaign: normalizeCampaign(response.data),
+        };
+      }
       return response.data;
     } catch (error) {
       throw error;
