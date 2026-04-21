@@ -10,6 +10,11 @@ type IntegrationContextValue = {
   isLoading: boolean;
   isGoogleConnected: boolean;
   connectedProviderLabel: string;
+  connectedAccountEmail: string | null;
+  grantedScopes: string[];
+  hasCalendarScope: boolean;
+  hasAnalyticsScope: boolean;
+  isDualScopeReady: boolean;
   refetchIntegrations: () => Promise<unknown>;
 };
 
@@ -25,12 +30,49 @@ export function IntegrationProvider({ children }: { children: React.ReactNode })
 
   const value = useMemo<IntegrationContextValue>(() => {
     const providers = integrationsQuery.data?.integrations ?? [];
-    const googleProvider = providers.find((provider) => provider.provider === 'google_calendar');
+
+    const googleProvider =
+      providers.find((provider) => provider.provider === 'google_calendar') ??
+      providers.find((provider) => provider.provider === 'google_analytics');
+
+    const grantedScopes = Array.from(
+      new Set(
+        providers
+          .filter((provider) => provider.connected)
+          .flatMap((provider) => {
+            const scopes = (provider as { grantedScopes?: unknown }).grantedScopes;
+            return Array.isArray(scopes)
+              ? scopes.filter((scope): scope is string => typeof scope === 'string')
+              : [];
+          })
+      )
+    );
+
+    const hasCalendarScope = grantedScopes.some((scope) =>
+      scope.includes('calendar')
+    );
+
+    const hasAnalyticsScope = grantedScopes.some((scope) =>
+      scope.includes('analytics.readonly') || scope.includes('analytics')
+    );
+
+    const isGoogleConnected = Boolean(googleProvider?.connected);
+    const rawAccountEmail = (googleProvider as { accountEmail?: unknown } | undefined)?.accountEmail;
+    const connectedAccountEmail = typeof rawAccountEmail === 'string' ? rawAccountEmail : null;
 
     return {
       isLoading: integrationsQuery.isLoading,
-      isGoogleConnected: Boolean(googleProvider?.connected),
-      connectedProviderLabel: googleProvider?.connected ? 'Google Calendar connected' : 'Google Calendar not connected',
+      isGoogleConnected,
+      connectedProviderLabel: isGoogleConnected
+        ? connectedAccountEmail
+          ? `Google connected (${connectedAccountEmail})`
+          : 'Google connected'
+        : 'Google not connected',
+      connectedAccountEmail,
+      grantedScopes,
+      hasCalendarScope,
+      hasAnalyticsScope,
+      isDualScopeReady: isGoogleConnected && hasCalendarScope && hasAnalyticsScope,
       refetchIntegrations: async () => integrationsQuery.refetch(),
     };
   }, [integrationsQuery]);
@@ -45,4 +87,3 @@ export function useIntegrationContext(): IntegrationContextValue {
   }
   return context;
 }
-

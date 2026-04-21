@@ -11,10 +11,13 @@ export const dynamic = 'force-dynamic';
 export default function DashboardPage({ searchParams }: DashboardPageProps) {
   const requestedTab = searchParams?.tab;
   const initialTab =
-    requestedTab === 'integrations' || requestedTab === 'profile' || requestedTab === 'campaigns'
+    requestedTab === 'dashboard' ||
+    requestedTab === 'integrations' ||
+    requestedTab === 'profile' ||
+    requestedTab === 'campaigns' ||
+    requestedTab === 'reports'
       ? requestedTab
       : 'campaigns';
 
   return <DashboardShell initialTab={initialTab} />;
 }
-

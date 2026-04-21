@@ -99,6 +99,44 @@ function normalizeCampaign(raw: unknown): Types.Campaign {
         : typeof item.calendar_last_synced_at === 'string'
           ? item.calendar_last_synced_at
           : undefined,
+    gaType:
+      typeof item.gaType === 'string'
+        ? (item.gaType as Types.Campaign['gaType'])
+        : typeof item.ga_type === 'string'
+          ? (item.ga_type as Types.Campaign['gaType'])
+          : typeof item.gaMode === 'string'
+            ? (item.gaMode as Types.Campaign['gaType'])
+            : typeof item.ga_mode === 'string'
+              ? (item.ga_mode as Types.Campaign['gaType'])
+              : undefined,
+    gaMode:
+      typeof item.gaMode === 'string'
+        ? (item.gaMode as Types.Campaign['gaMode'])
+        : typeof item.gaType === 'string'
+          ? (item.gaType as Types.Campaign['gaMode'])
+          : typeof item.ga_type === 'string'
+            ? (item.ga_type as Types.Campaign['gaMode'])
+        : typeof item.ga_mode === 'string'
+          ? (item.ga_mode as Types.Campaign['gaMode'])
+          : undefined,
+    gaMeasurementId:
+      typeof item.gaMeasurementId === 'string'
+        ? item.gaMeasurementId
+        : typeof item.ga_measurement_id === 'string'
+          ? item.ga_measurement_id
+          : undefined,
+    gaPropertyId:
+      typeof item.gaPropertyId === 'string'
+        ? item.gaPropertyId
+        : typeof item.ga_property_id === 'string'
+          ? item.ga_property_id
+          : undefined,
+    gaSource:
+      typeof item.gaSource === 'string'
+        ? item.gaSource
+        : typeof item.ga_source === 'string'
+          ? item.ga_source
+          : undefined,
     createdAt: String(item.createdAt ?? item.created_at ?? new Date().toISOString()),
     updatedAt: String(item.updatedAt ?? item.updated_at ?? new Date().toISOString()),
   };
@@ -694,6 +732,45 @@ export const apiClient = {
               : typeof item.updated_at === 'string'
                 ? item.updated_at
                 : undefined,
+          accountEmail:
+            typeof item.accountEmail === 'string'
+              ? item.accountEmail
+              : typeof item.account_email === 'string'
+                ? item.account_email
+                : typeof item.email === 'string'
+                  ? item.email
+                  : undefined,
+          grantedScopes: (() => {
+            const fromArray = Array.isArray(item.grantedScopes)
+              ? item.grantedScopes
+              : Array.isArray(item.granted_scopes)
+                ? item.granted_scopes
+                : Array.isArray(item.scopes)
+                  ? item.scopes
+                  : null;
+
+            if (fromArray) {
+              return fromArray.filter((scope): scope is string => typeof scope === 'string');
+            }
+
+            const fromString =
+              typeof item.grantedScopes === 'string'
+                ? item.grantedScopes
+                : typeof item.granted_scopes === 'string'
+                  ? item.granted_scopes
+                  : typeof item.scopes === 'string'
+                    ? item.scopes
+                    : undefined;
+
+            if (!fromString) {
+              return undefined;
+            }
+
+            return fromString
+              .split(/[\s,]+/)
+              .map((scope) => scope.trim())
+              .filter(Boolean);
+          })(),
         })),
       };
     } catch (error) {
@@ -945,7 +1022,92 @@ export const apiClient = {
       throw error;
     }
   },
+
+  /**
+   * GA4 - List properties
+   * GET /api/v1/ga4/properties
+   */
+  async getGA4Properties(): Promise<Types.GetGA4PropertiesResponse> {
+    try {
+      const response = await getAPIClient().get('/ga4/properties');
+      return normalizeGA4PropertiesResponse(response.data);
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
+   * GA4 - Detect measurement id from URL
+   * GET /api/v1/ga4/detect?url=...
+   */
+  async detectGA4Measurement(
+    req: Types.DetectGA4MeasurementRequest
+  ): Promise<Types.DetectGA4MeasurementResponse> {
+    try {
+      const response = await getAPIClient().get('/ga4/detect', {
+        params: {
+          url: req.url,
+        },
+      });
+      return normalizeGA4DetectResponse(req.url, response.data);
+    } catch (error) {
+      throw error;
+    }
+  },
 };
+
+function normalizeGA4Property(raw: unknown): Types.GA4Property {
+  const item = (raw ?? {}) as UnknownRecord;
+  const gaMeasurementId =
+    typeof item.ga_measurement_id === 'string'
+      ? item.ga_measurement_id
+      : typeof item.measurement_id === 'string'
+        ? item.measurement_id
+        : undefined;
+
+  return {
+    property_id: String(item.property_id ?? item.propertyId ?? item.id ?? ''),
+    display_name: String(item.display_name ?? item.displayName ?? item.name ?? ''),
+    ...(gaMeasurementId ? { ga_measurement_id: gaMeasurementId } : {}),
+  };
+}
+
+function normalizeGA4PropertiesResponse(raw: unknown): Types.GetGA4PropertiesResponse {
+  const data = (raw ?? {}) as UnknownRecord;
+  const source =
+    (Array.isArray(data.properties) && data.properties) ||
+    (Array.isArray(data.items) && data.items) ||
+    (Array.isArray(raw) ? (raw as unknown[]) : []);
+
+  return {
+    properties: source.map((item) => normalizeGA4Property(item)),
+  };
+}
+
+function normalizeGA4DetectResponse(
+  requestUrl: string,
+  raw: unknown
+): Types.DetectGA4MeasurementResponse {
+  const data = (raw ?? {}) as UnknownRecord;
+  const measurementIds = Array.isArray(data.measurement_ids)
+    ? data.measurement_ids.filter((id): id is string => typeof id === 'string')
+    : undefined;
+
+  const gaMeasurementId =
+    typeof data.ga_measurement_id === 'string'
+      ? data.ga_measurement_id
+      : typeof data.measurement_id === 'string'
+        ? data.measurement_id
+        : measurementIds?.[0];
+
+  return {
+    url: typeof data.url === 'string' ? data.url : requestUrl,
+    ...(gaMeasurementId ? { ga_measurement_id: gaMeasurementId } : {}),
+    ...(measurementIds ? { measurement_ids: measurementIds } : {}),
+    ...(typeof data.confidence === 'string' ? { confidence: data.confidence } : {}),
+    ...(typeof data.source === 'string' ? { source: data.source } : {}),
+  };
+}
 
 export default apiClient;
 

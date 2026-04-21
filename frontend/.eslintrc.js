@@ -8,7 +8,6 @@ module.exports = {
   plugins: ['@typescript-eslint'],
   rules: {
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
-    '@typescript-eslint/explicit-function-return-types': ['warn'],
     '@next/next/no-html-link-for-pages': 'off',
   },
   overrides: [

@@ -4,6 +4,10 @@ frontend/.next/
 frontend/out/
 frontend/dist/
 frontend/build/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/tsconfig.tsbuildinfo
 frontend/.env*
 frontend/.env.local
 frontend/.env.*.local

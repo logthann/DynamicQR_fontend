@@ -24,7 +24,14 @@ import { z } from 'zod';
 import { apiClient } from '@/lib/api/client';
 import { queryKeys, staleTimes } from '@/lib/cache/query-client';
 import type { Campaign, CreateQRRequest } from '@/lib/api/generated/types';
+import {
+  buildGAModePayload,
+  isValidManualMeasurementId,
+  shouldEnableGA4PropertiesQuery,
+  type GA4Mode,
+} from '@/modules/ga4/ga4-mode';
 import QRCodePreview from '@/modules/qr/shared/qr-code-preview';
+import { useIntegrationContext } from '@/state/integration-context';
 
 /**
  * Validation schema for create QR form
@@ -44,6 +51,9 @@ const createQRSchema = z.object({
 type CreateQRFormData = z.infer<typeof createQRSchema>;
 
 export default function CreateQRForm() {
+  const { isGoogleConnected, hasAnalyticsScope } = useIntegrationContext();
+  const [ga4Mode, setGa4Mode] = useState<GA4Mode>('NO');
+  const [selectedGA4PropertyId, setSelectedGA4PropertyId] = useState<string>('');
   const [successQR, setSuccessQR] = useState<{
     shortCode: string;
     destinationUrl: string;
@@ -53,6 +63,9 @@ export default function CreateQRForm() {
   const {
     register,
     handleSubmit,
+    getValues,
+    setValue,
+    clearErrors,
     formState: { errors },
     setError,
   } = useForm<CreateQRFormData>({
@@ -72,6 +85,82 @@ export default function CreateQRForm() {
     queryFn: () => apiClient.getCampaigns(),
     staleTime: staleTimes.campaigns,
   });
+
+  const ga4PropertiesQuery = useQuery({
+    queryKey: [...queryKeys.integrations.all, 'ga4-properties'],
+    queryFn: () => apiClient.getGA4Properties(),
+    staleTime: staleTimes.calendarEvents,
+    enabled: shouldEnableGA4PropertiesQuery({
+      isGoogleConnected,
+      hasAnalyticsScope,
+    }),
+  });
+
+  const selectedGA4Property = (ga4PropertiesQuery.data?.properties ?? []).find(
+    (property) => property.property_id === selectedGA4PropertyId
+  );
+
+  const [ga4DetectMessage, setGa4DetectMessage] = useState<{
+    tone: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
+  const detectGA4Mutation = useMutation({
+    mutationFn: async (url: string) => apiClient.detectGA4Measurement({ url }),
+    onSuccess: (result) => {
+      const detectedMeasurementId =
+        result.ga_measurement_id || result.measurement_ids?.[0];
+
+      if (!detectedMeasurementId) {
+        setGa4DetectMessage({
+          tone: 'error',
+          text: 'No GA4 measurement id found from this URL.',
+        });
+        return;
+      }
+
+      setValue('ga_measurement_id', detectedMeasurementId, {
+        shouldDirty: true,
+        shouldTouch: true,
+        shouldValidate: true,
+      });
+      clearErrors('ga_measurement_id');
+      setGa4DetectMessage({
+        tone: 'success',
+        text: `Detected measurement id: ${detectedMeasurementId}`,
+      });
+    },
+    onError: (error: unknown) => {
+      const fallback = 'Unable to detect GA4 measurement id. You can still enter it manually.';
+      const text = error instanceof Error ? error.message || fallback : fallback;
+      setGa4DetectMessage({ tone: 'error', text });
+    },
+  });
+
+  const handleDetectGA4FromLink = async () => {
+    const destinationUrl = (getValues('destination_url') || '').trim();
+    if (!destinationUrl) {
+      setGa4DetectMessage({
+        tone: 'error',
+        text: 'Enter a destination URL first, then try Scan from link.',
+      });
+      return;
+    }
+
+    try {
+      // Validate URL early for a clearer inline message than API-level failures.
+      new URL(destinationUrl);
+    } catch {
+      setGa4DetectMessage({
+        tone: 'error',
+        text: 'Destination URL is invalid. Please provide a full http(s) URL.',
+      });
+      return;
+    }
+
+    setGa4DetectMessage(null);
+    await detectGA4Mutation.mutateAsync(destinationUrl);
+  };
 
   /**
    * AC-005: Mutation for creating QR code
@@ -107,19 +196,63 @@ export default function CreateQRForm() {
       }
     }
 
+    if (ga4Mode === 'OAUTH' && !selectedGA4PropertyId) {
+      setError('ga_measurement_id', {
+        type: 'manual',
+        message: 'Please select a GA4 property for OAuth mode.',
+      });
+      return;
+    }
+
+    const oauthMeasurementId = selectedGA4Property?.ga_measurement_id;
+    const manualMeasurementId = (data.ga_measurement_id || '').trim();
+
+    if (ga4Mode === 'MANUAL' && manualMeasurementId && !isValidManualMeasurementId(manualMeasurementId)) {
+      setError('ga_measurement_id', {
+        type: 'manual',
+        message: 'Manual measurement id must match G-XXXXXXXXXX format.',
+      });
+      return;
+    }
+
+    const resolvedMeasurementId =
+      ga4Mode === 'OAUTH'
+        ? oauthMeasurementId || undefined
+        : ga4Mode === 'MANUAL'
+          ? manualMeasurementId || undefined
+          : undefined;
+
+    if (ga4Mode === 'OAUTH' && !resolvedMeasurementId) {
+      setError('ga_measurement_id', {
+        type: 'manual',
+        message: 'Selected property has no measurement id yet.',
+      });
+      return;
+    }
+
+    const gaPayload = buildGAModePayload({
+      mode: ga4Mode,
+      selectedPropertyId: selectedGA4PropertyId || undefined,
+      manualMeasurementId,
+      oauthMeasurementId,
+      sourceWhenOAuth: 'qr_override',
+      sourceWhenManual: 'manual',
+      sourceWhenNo: 'campaign_default',
+    });
+
     const createRequest: CreateQRRequest = {
       name: data.name,
       campaign_id: Number(data.campaignId),
       destination_url: data.destination_url,
       qr_type: data.qr_type,
-      ga_measurement_id: data.ga_measurement_id || undefined,
+      ga_measurement_id: resolvedMeasurementId,
       utm_source: data.utm_source || undefined,
       utm_medium: data.utm_medium || undefined,
       utm_campaign: data.utm_campaign || undefined,
       design_config: parsedDesignConfig,
       status: 'active',
     };
-    createQRMutation.mutate(createRequest);
+    createQRMutation.mutate({ ...(createRequest as any), ...(gaPayload as any) });
   };
 
   return (
@@ -239,19 +372,117 @@ export default function CreateQRForm() {
               </select>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <label htmlFor="ga_measurement_id" className="block text-sm font-medium text-foreground">
-                  GA Measurement ID
-                </label>
+            <div className="rounded-md border border-muted p-4 space-y-3">
+              <p className="text-sm font-medium text-foreground">Google Analytics Tracking</p>
+
+              <label className="flex items-start gap-2 text-sm text-foreground">
                 <input
-                  id="ga_measurement_id"
-                  type="text"
-                  {...register('ga_measurement_id')}
-                  className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-                  placeholder="G-XXXXXXX"
+                  type="radio"
+                  checked={ga4Mode === 'OAUTH'}
+                  onChange={() => setGa4Mode('OAUTH')}
                 />
-              </div>
+                <span>
+                  Use connected Google account (Recommended)
+                  <span className="block text-xs text-muted-foreground">
+                    Select GA4 property from your OAuth-connected account.
+                  </span>
+                </span>
+              </label>
+
+              {ga4Mode === 'OAUTH' && (
+                <div className="space-y-2">
+                  <select
+                    value={selectedGA4PropertyId}
+                    onChange={(event) => setSelectedGA4PropertyId(event.target.value)}
+                    disabled={!isGoogleConnected || !hasAnalyticsScope || ga4PropertiesQuery.isLoading}
+                    className="block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground disabled:opacity-50"
+                  >
+                    <option value="">Select GA4 property...</option>
+                    {(ga4PropertiesQuery.data?.properties ?? []).map((property) => (
+                      <option key={property.property_id} value={property.property_id}>
+                        {property.display_name} ({property.property_id})
+                      </option>
+                    ))}
+                  </select>
+                  {!isGoogleConnected && (
+                    <p className="text-xs text-amber-300">Connect Google first to use OAuth property mode.</p>
+                  )}
+                  {isGoogleConnected && !hasAnalyticsScope && (
+                    <p className="text-xs text-amber-300">Analytics scope is missing. Reconnect consent is required.</p>
+                  )}
+                  {selectedGA4Property?.ga_measurement_id && (
+                    <p className="text-xs text-muted-foreground">
+                      Resolved measurement id: {selectedGA4Property.ga_measurement_id}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <input
+                  type="radio"
+                  checked={ga4Mode === 'MANUAL'}
+                  onChange={() => setGa4Mode('MANUAL')}
+                />
+                <span>
+                  Manual entry
+                  <span className="block text-xs text-muted-foreground">
+                    Enter your own GA measurement id (G-XXXXXXXXXX).
+                  </span>
+                </span>
+              </label>
+
+              {ga4Mode === 'MANUAL' && (
+                <div className="space-y-2">
+                  <input
+                    id="ga_measurement_id"
+                    type="text"
+                    {...register('ga_measurement_id')}
+                    className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
+                    placeholder="G-XXXXXXXXXX"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDetectGA4FromLink}
+                    disabled={detectGA4Mutation.isPending}
+                    className="rounded-md border border-primary bg-background px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                  >
+                    {detectGA4Mutation.isPending ? 'Scanning...' : 'Scan from link'}
+                  </button>
+                  {ga4DetectMessage && (
+                    <p
+                      className={
+                        ga4DetectMessage.tone === 'success'
+                          ? 'text-xs text-emerald-300'
+                          : 'text-xs text-amber-300'
+                      }
+                    >
+                      {ga4DetectMessage.text}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <input
+                  type="radio"
+                  checked={ga4Mode === 'NO'}
+                  onChange={() => setGa4Mode('NO')}
+                />
+                <span>
+                  Use campaign default
+                  <span className="block text-xs text-muted-foreground">
+                    Uses campaign-level default GA4 configuration when available.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {errors.ga_measurement_id && (
+              <p className="-mt-2 text-sm text-destructive">{errors.ga_measurement_id.message}</p>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-2">
               <div>
                 <label htmlFor="utm_source" className="block text-sm font-medium text-foreground">
                   UTM Source

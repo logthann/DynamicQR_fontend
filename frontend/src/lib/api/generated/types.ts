@@ -45,6 +45,11 @@ export interface Campaign {
   googleEventId?: string;
   calendarSyncStatus?: 'not_linked' | 'synced' | 'out_of_sync' | 'removed';
   calendarLastSyncedAt?: string;
+  gaType?: 'OAUTH' | 'MANUAL' | 'NO';
+  gaMode?: 'OAUTH' | 'MANUAL' | 'NO';
+  gaMeasurementId?: string;
+  gaPropertyId?: string;
+  gaSource?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,6 +78,13 @@ export interface UpdateCampaignRequest {
   description?: string;
   start_date?: string;
   end_date?: string;
+  ga_type?: 'OAUTH' | 'MANUAL' | 'NO';
+  ga_property_id?: string | null;
+  ga_measurement_id?: string | null;
+  google_event_id?: string | null;
+  calendar_sync_status?: 'not_linked' | 'synced' | 'out_of_sync' | 'removed' | null;
+  calendar_last_synced_at?: string | null;
+  calendar_sync_hash?: string | null;
 }
 
 export interface DeleteCampaignRequest {
@@ -90,7 +102,9 @@ export interface QRCode {
   qr_type: 'url' | 'event';
   qrType?: 'url' | 'event';
   design_config?: Record<string, unknown> | null;
+  ga_type?: 'OAUTH' | 'MANUAL' | 'NO';
   ga_measurement_id?: string;
+  ga_property_id?: string | null;
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
@@ -112,7 +126,9 @@ export interface CreateQRRequest {
   destination_url: string;
   qr_type: 'url' | 'event';
   design_config?: Record<string, unknown> | null;
+  ga_type?: 'OAUTH' | 'MANUAL' | 'NO';
   ga_measurement_id?: string;
+  ga_property_id?: string | null;
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
@@ -146,7 +162,9 @@ export interface UpdateQRRequest {
   destination_url?: string;
   qr_type?: 'url' | 'event';
   design_config?: Record<string, unknown> | null;
+  ga_type?: 'OAUTH' | 'MANUAL' | 'NO';
   ga_measurement_id?: string;
+  ga_property_id?: string | null;
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
@@ -230,6 +248,8 @@ export interface IntegrationStatus {
   provider: IntegrationProvider;
   connected: boolean;
   updatedAt?: string;
+  accountEmail?: string;
+  grantedScopes?: string[];
 }
 
 export interface GetIntegrationsResponse {
@@ -291,6 +311,29 @@ export interface UnlinkCampaignResponse {
   campaign?: Campaign;
 }
 
+// GA4 Integration Endpoints
+export interface GA4Property {
+  property_id: string;
+  display_name: string;
+  ga_measurement_id?: string;
+}
+
+export interface GetGA4PropertiesResponse {
+  properties: GA4Property[];
+}
+
+export interface DetectGA4MeasurementRequest {
+  url: string;
+}
+
+export interface DetectGA4MeasurementResponse {
+  url: string;
+  ga_measurement_id?: string;
+  measurement_ids?: string[];
+  confidence?: string;
+  source?: string;
+}
+
 // Error Response
 export interface ErrorResponse {
   message: string;
@@ -336,5 +379,10 @@ export interface APIClient {
   importCampaigns(req: ImportCampaignsRequest): Promise<ImportCampaignsResponse>;
   syncCampaign(req: SyncCampaignRequest): Promise<SyncCampaignResponse>;
   unlinkCampaign(req: UnlinkCampaignRequest): Promise<UnlinkCampaignResponse>;
-}
 
+  // GA4
+  getGA4Properties(): Promise<GetGA4PropertiesResponse>;
+  detectGA4Measurement(
+    req: DetectGA4MeasurementRequest
+  ): Promise<DetectGA4MeasurementResponse>;
+}

@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIError } from '@/lib/api/client';
+import * as Types from '@/lib/api/generated/types';
 import { cacheInvalidations, queryClient, queryKeys, staleTimes } from '@/lib/cache/query-client';
 import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
 import { useIntegrationContext } from '@/state/integration-context';
@@ -12,6 +13,72 @@ type IntegrationMode = 'none' | 'sync' | 'import' | 'remove';
 type QueueStatus = 'idle' | 'pending' | 'success' | 'error';
 
 const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
+
+function normalizeCampaignId(rawId: string): string {
+  const trimmed = String(rawId || '').trim();
+  if (!trimmed) return '';
+
+  // Keep only numeric route id when UI accidentally carries decorated labels.
+  const directNumeric = Number(trimmed);
+  if (Number.isInteger(directNumeric) && directNumeric >= 0) {
+    return String(directNumeric);
+  }
+
+  const matches = trimmed.match(/\d+/g);
+  return matches && matches.length > 0 ? matches[matches.length - 1] : trimmed;
+}
+
+function isDeleteFailedError(error: unknown): error is APIError {
+  const apiError = error as APIError | undefined;
+  if (!apiError || apiError.status !== 400) {
+    return false;
+  }
+
+  const message = String(apiError.message || '').toLowerCase();
+  const details = JSON.stringify(apiError.details || {}).toLowerCase();
+  return message.includes('delete failed') || details.includes('delete failed');
+}
+
+function applyOptimisticUnlink(campaignId: string) {
+  queryClient.setQueriesData<Types.GetCampaignsResponse>(
+    { queryKey: queryKeys.campaigns.lists() },
+    (current) => {
+      if (!current?.campaigns) {
+        return current;
+      }
+
+      return {
+        ...current,
+        campaigns: current.campaigns.map((campaign) =>
+          String(campaign.id) === campaignId
+            ? {
+                ...campaign,
+                googleEventId: undefined,
+                calendarSyncStatus: 'not_linked',
+                calendarLastSyncedAt: undefined,
+              }
+            : campaign
+        ),
+      };
+    }
+  );
+
+  queryClient.setQueryData<Types.Campaign | undefined>(
+    queryKeys.campaigns.detail(campaignId),
+    (current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        googleEventId: undefined,
+        calendarSyncStatus: 'not_linked',
+        calendarLastSyncedAt: undefined,
+      };
+    }
+  );
+}
 
 export default function DashboardIntegrationActions({
   mode,
@@ -92,6 +159,7 @@ export default function DashboardIntegrationActions({
         throw new Error('Select at least one campaign.');
       }
 
+      let forcedUnlinkCount = 0;
       const nextResults: Record<string, QueueStatus> = {};
       selectedCampaignIds.forEach((id) => {
         nextResults[id] = 'pending';
@@ -99,25 +167,69 @@ export default function DashboardIntegrationActions({
       setQueueResults(nextResults);
       setQueueMessage(`Running ${action} queue for ${selectedCampaignIds.length} campaign(s)...`);
 
-      for (const campaignId of selectedCampaignIds) {
+      for (const rawCampaignId of selectedCampaignIds) {
+        const campaignId = normalizeCampaignId(rawCampaignId);
+
+        if (!campaignId) {
+          setQueueResults((prev) => ({ ...prev, [rawCampaignId]: 'error' }));
+          continue;
+        }
+
         try {
           if (action === 'sync') {
             await apiClient.syncCampaign({ campaignId });
             cacheInvalidations.syncCampaignToCalendar(campaignId);
           } else {
-            await apiClient.unlinkCampaign({ campaignId });
+            try {
+              await apiClient.unlinkCampaign({ campaignId });
+            } catch (error) {
+              if (!isDeleteFailedError(error)) {
+                throw error;
+              }
+
+              const shouldForceUnlink =
+                typeof window !== 'undefined'
+                  ? window.confirm(
+                      'Google event deletion failed for this campaign. Do you want to force unlink and clear calendar fields locally?'
+                    )
+                  : false;
+
+              if (!shouldForceUnlink) {
+                throw error;
+              }
+
+              await apiClient.updateCampaign({
+                campaignId,
+                google_event_id: null,
+                calendar_sync_status: 'not_linked',
+                calendar_last_synced_at: null,
+                calendar_sync_hash: null,
+              });
+
+              forcedUnlinkCount += 1;
+            }
+
+            applyOptimisticUnlink(campaignId);
             cacheInvalidations.unlinkCampaignFromCalendar(campaignId);
           }
-          setQueueResults((prev) => ({ ...prev, [campaignId]: 'success' }));
+          setQueueResults((prev) => ({ ...prev, [rawCampaignId]: 'success' }));
         } catch {
-          setQueueResults((prev) => ({ ...prev, [campaignId]: 'error' }));
+          setQueueResults((prev) => ({ ...prev, [rawCampaignId]: 'error' }));
         }
       }
 
       await queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
       await refetchIntegrations();
+
+      return { action, forcedUnlinkCount };
     },
-    onSuccess: () => {
+    onSuccess: ({ action, forcedUnlinkCount }) => {
+      if (action === 'remove' && forcedUnlinkCount > 0) {
+        setQueueMessage(
+          `Queue completed. ${forcedUnlinkCount} campaign(s) were force-unlinked after Google delete failed.`
+        );
+        return;
+      }
       setQueueMessage('Queue completed. Refreshing campaign statuses.');
     },
     onError: (error: any) => {

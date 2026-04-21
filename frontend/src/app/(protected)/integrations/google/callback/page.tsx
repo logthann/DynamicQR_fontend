@@ -7,7 +7,7 @@
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '@/lib/api/client';
 import { getGoogleOAuthRedirectUri } from '@/lib/integrations/google-oauth';
@@ -16,7 +16,7 @@ import { queryClient, queryKeys } from '@/lib/cache/query-client';
 
 const OAUTH_RETURN_PATH_KEY = 'dqr:oauth-return-path';
 
-export default function GoogleIntegrationCallbackPage() {
+function GoogleIntegrationCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [message, setMessage] = useState('Processing Google callback...');
@@ -145,3 +145,19 @@ export default function GoogleIntegrationCallbackPage() {
     </section>
   );
 }
+
+export default function GoogleIntegrationCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <section className="mx-auto max-w-2xl rounded-lg border border-muted bg-card p-6">
+          <h1 className="text-xl font-semibold text-foreground">Google Calendar Callback</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Processing Google callback...</p>
+        </section>
+      }
+    >
+      <GoogleIntegrationCallbackContent />
+    </Suspense>
+  );
+}
+

@@ -6,22 +6,103 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  BarChart3,
+  Calendar,
+  Check,
+  FileText,
+  Pencil,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
 import { apiClient } from '@/lib/api/client';
 import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
 import CampaignQRManager from '@/modules/campaigns/detail/campaign-qr-manager';
+import {
+  isValidManualMeasurementId,
+  shouldEnableGA4PropertiesQuery,
+  type GA4Mode,
+} from '@/modules/ga4/ga4-mode';
 import { useIntegrationContext } from '@/state/integration-context';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface CampaignDetailProps {
   campaignId: string;
 }
 
+type CampaignPatchBody = {
+  name?: string;
+  description?: string;
+  start_date?: string;
+  end_date?: string;
+  status?: 'active' | 'paused' | 'draft' | 'archived';
+  ga_type?: 'OAUTH' | 'MANUAL' | 'NO';
+  ga_measurement_id?: string | null;
+  ga_property_id?: string | null;
+  google_event_id?: string | null;
+  calendar_sync_status?: 'not_linked' | 'synced' | 'out_of_sync' | 'removed' | null;
+  calendar_last_synced_at?: string | null;
+  calendar_sync_hash?: string | null;
+};
+
+function sanitizeCampaignPatch(input: Record<string, unknown>): CampaignPatchBody {
+  const allowedKeys: Array<keyof CampaignPatchBody> = [
+    'name',
+    'description',
+    'start_date',
+    'end_date',
+    'status',
+    'ga_type',
+    'ga_measurement_id',
+    'ga_property_id',
+    'google_event_id',
+    'calendar_sync_status',
+    'calendar_last_synced_at',
+    'calendar_sync_hash',
+  ];
+
+  const payload: CampaignPatchBody = {};
+
+  for (const key of allowedKeys) {
+    const value = input[key];
+    if (value === undefined) {
+      continue;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      payload[key] = (trimmed.length > 0 ? trimmed : undefined) as never;
+      continue;
+    }
+
+    payload[key] = value as never;
+  }
+
+  return payload;
+}
+
 export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   const router = useRouter();
-  const { isGoogleConnected, refetchIntegrations } = useIntegrationContext();
+  const {
+    isLoading: integrationsLoading,
+    isGoogleConnected,
+    connectedAccountEmail,
+    connectedProviderLabel,
+    hasCalendarScope,
+    hasAnalyticsScope,
+    refetchIntegrations,
+  } = useIntegrationContext();
+  const [ga4Mode, setGa4Mode] = useState<GA4Mode>('MANUAL');
+  const [selectedGA4MeasurementId, setSelectedGA4MeasurementId] = useState<string>('');
+  const [manualCampaignGA, setManualCampaignGA] = useState<string>('');
   const [isEditing, setIsEditing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [calendarActionMessage, setCalendarActionMessage] = useState<string | null>(null);
@@ -55,6 +136,17 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     },
     onError: (err: any) => {
       setErrorMessage(err?.message || 'Failed to delete campaign.');
+    },
+  });
+
+  const updateCampaignGAMutation = useMutation({
+    mutationFn: apiClient.updateCampaign,
+    onSuccess: (updated) => {
+      cacheInvalidations.updateCampaign(String(updated.id));
+      setErrorMessage(null);
+    },
+    onError: (err: any) => {
+      setErrorMessage(err?.message || 'Failed to update GA4 settings.');
     },
   });
 
@@ -95,6 +187,55 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     },
   });
 
+  const campaign = campaignQuery.data;
+
+  useEffect(() => {
+    if (!campaign) {
+      return;
+    }
+
+    const persistedMode = campaign.gaType || campaign.gaMode;
+    const nextMode = persistedMode === 'OAUTH' ? 'OAUTH' : 'MANUAL';
+    setGa4Mode(nextMode);
+    setSelectedGA4MeasurementId(campaign.gaMeasurementId || '');
+    setManualCampaignGA(campaign.gaMeasurementId || '');
+  }, [campaign?.id, campaign?.gaType, campaign?.gaMode, campaign?.gaPropertyId, campaign?.gaMeasurementId]);
+
+  const ga4PropertiesQuery = useQuery({
+    queryKey: [...queryKeys.integrations.all, 'ga4-properties'],
+    queryFn: () => apiClient.getGA4Properties(),
+    staleTime: staleTimes.calendarEvents,
+    enabled:
+      ga4Mode === 'OAUTH' &&
+      shouldEnableGA4PropertiesQuery({
+        isGoogleConnected,
+        hasAnalyticsScope,
+      }),
+  });
+
+  useEffect(() => {
+    if (selectedGA4MeasurementId) {
+      return;
+    }
+
+    if (!campaign?.gaPropertyId) {
+      return;
+    }
+
+    const fromPropertyId = (ga4PropertiesQuery.data?.properties ?? []).find(
+      (property) => property.property_id === campaign.gaPropertyId
+    );
+
+    if (fromPropertyId?.ga_measurement_id) {
+      setSelectedGA4MeasurementId(fromPropertyId.ga_measurement_id);
+    }
+  }, [selectedGA4MeasurementId, campaign?.gaPropertyId, ga4PropertiesQuery.data?.properties]);
+
+
+  const selectedGA4Property = (ga4PropertiesQuery.data?.properties ?? []).find(
+    (property) => property.ga_measurement_id === selectedGA4MeasurementId
+  );
+
   if (campaignQuery.isLoading) {
     return (
       <div className="rounded-lg border border-muted bg-card p-6">
@@ -125,7 +266,6 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     );
   }
 
-  const campaign = campaignQuery.data;
   const calendarSyncStatus = campaign?.calendarSyncStatus || 'not_linked';
   const isCampaignSynced =
     calendarSyncStatus === 'synced' ||
@@ -156,115 +296,354 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   }
 
   return (
-    <section className="space-y-6 rounded-lg border border-muted bg-card p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">{campaign.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Campaign ID: {campaign.id}</p>
+    <section className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold tracking-tight">{campaign.name}</h1>
+          <span className="text-sm text-muted-foreground">(ID: {campaign.id})</span>
+          <Badge
+            variant="outline"
+            className={
+              (campaign.status || 'active') === 'active'
+                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500'
+                : 'border-amber-500/50 bg-amber-500/10 text-amber-500'
+            }
+          >
+            {(campaign.status || 'active').toUpperCase()}
+          </Badge>
         </div>
-        <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
-          {(campaign.status || 'active').replace('_', ' ')}
-        </span>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setIsEditing((prev) => !prev);
+              setErrorMessage(null);
+            }}
+          >
+            <Pencil className="mr-2 size-4" />
+            {isEditing ? 'Close Edit' : 'Edit Campaign'}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={deleteCampaignMutation.isPending}
+            onClick={() => {
+              if (!window.confirm('Delete this campaign? This action cannot be undone.')) {
+                return;
+              }
+              deleteCampaignMutation.mutate({ campaignId });
+            }}
+            className="border-destructive/40 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="mr-2 size-4" />
+            {deleteCampaignMutation.isPending ? 'Deleting...' : 'Delete'}
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/dashboard">
+              <ArrowLeft className="mr-2 size-4" />
+              Back to Dashboard
+            </Link>
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <article className="rounded-md border border-muted p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Start date</p>
-          <p className="mt-1 text-sm text-foreground">{campaign.startDate || '-'}</p>
-        </article>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg">Campaign Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex items-center gap-3">
+              <Calendar className="size-5 text-muted-foreground" />
+              <span className="text-sm font-medium">Timeline:</span>
+              <span className="text-sm text-muted-foreground">{campaign.startDate || '-'}</span>
+              <span className="text-muted-foreground">{'->'}</span>
+              <span className="text-sm text-muted-foreground">{campaign.endDate || '-'}</span>
+            </div>
 
-        <article className="rounded-md border border-muted p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">End date</p>
-          <p className="mt-1 text-sm text-foreground">{campaign.endDate || '-'}</p>
-        </article>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <FileText className="size-5 text-muted-foreground" />
+                <span className="text-sm font-medium">Description</span>
+              </div>
+              <p className="pl-7 text-sm leading-relaxed text-muted-foreground">
+                {campaign.description || 'No description provided.'}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="flex flex-col">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">Status</CardTitle>
+              <Badge
+                variant="secondary"
+                className={campaign.gaMeasurementId ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500' : 'text-amber-500'}
+              >
+                <BarChart3 className="mr-1.5 size-3" />
+                {campaign.gaMeasurementId ? 'Tracking Active' : 'No Tracking'}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-1 flex-col space-y-4">
+            <div className="space-y-3">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Integrations</span>
+
+              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Calendar className="size-4 text-muted-foreground" />
+                  <span className="text-sm">Google Calendar</span>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={
+                    isGoogleConnected
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-xs'
+                      : 'text-xs text-muted-foreground'
+                  }
+                >
+                  {isGoogleConnected ? 'Connected' : 'Not connected'}
+                </Badge>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="size-4 text-muted-foreground" />
+                  <span className="text-sm">Google Analytics</span>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={
+                    hasAnalyticsScope
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-xs'
+                      : 'text-xs text-muted-foreground'
+                  }
+                >
+                  {hasAnalyticsScope ? 'Connected' : 'Missing scope'}
+                </Badge>
+              </div>
+            </div>
+
+            <div className="flex-1" />
+
+            <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="size-4 text-amber-500" />
+                <span className="text-sm font-medium text-amber-500">Calendar Sync</span>
+              </div>
+              <p className="text-xs text-amber-500/80">
+                {integrationsLoading
+                  ? 'Checking Google connection...'
+                  : isCampaignSynced
+                    ? `Status: ${calendarSyncStatus.replace('_', ' ')}`
+                    : 'Campaign is not synced yet.'}
+              </p>
+              {campaign.calendarLastSyncedAt && (
+                <p className="text-xs text-amber-500/80">
+                  Last synced: {new Date(campaign.calendarLastSyncedAt).toLocaleString()}
+                </p>
+              )}
+              {connectedAccountEmail && (
+                <p className="text-xs text-amber-500/80">Account: {connectedAccountEmail}</p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                {isGoogleConnected && !isCampaignSynced && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full border-amber-500/30 text-amber-500 hover:bg-amber-500/10"
+                    disabled={isCalendarActionPending}
+                    onClick={() => syncCampaignMutation.mutate({ campaignId })}
+                  >
+                    <RefreshCw className="mr-2 size-3" />
+                    {syncCampaignMutation.isPending ? 'Syncing...' : 'Sync to Google Calendar'}
+                  </Button>
+                )}
+
+                {isGoogleConnected && isCampaignSynced && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+                    disabled={isCalendarActionPending}
+                    onClick={() => {
+                      if (!window.confirm('Remove this campaign from Google Calendar?')) {
+                        return;
+                      }
+                      unlinkCampaignMutation.mutate({ campaignId });
+                    }}
+                  >
+                    {unlinkCampaignMutation.isPending ? 'Removing...' : 'Remove from Calendar'}
+                  </Button>
+                )}
+
+                {!isGoogleConnected && (
+                  <p className="w-full text-xs text-muted-foreground">
+                    {connectedProviderLabel}
+                  </p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <article className="rounded-md border border-muted p-4">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">Description</p>
-        <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">
-          {campaign.description || 'No description'}
-        </p>
-      </article>
+      {calendarActionMessage && (
+        <Card>
+          <CardContent className="p-3 text-sm text-muted-foreground">{calendarActionMessage}</CardContent>
+        </Card>
+      )}
 
-      <article className="space-y-3 rounded-md border border-muted p-4">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Google Calendar</p>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
-              {calendarSyncStatus.replace('_', ' ')}
-            </span>
-            <span
-              className={`inline-flex items-center rounded-full border px-2 py-1 text-xs ${
-                isGoogleConnected
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
-              }`}
-            >
-              {isGoogleConnected ? 'oauth connected' : 'oauth not connected'}
-            </span>
+      <Card>
+        <CardHeader>
+          <CardTitle>Google Analytics 4 Configuration</CardTitle>
+          <CardDescription>Configure GA4 tracking for this campaign.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-4">
+            <label className="flex items-start gap-2 text-sm text-foreground">
+              <input type="radio" checked={ga4Mode === 'OAUTH'} onChange={() => setGa4Mode('OAUTH')} />
+              <span>
+                Use Connected Account
+                <Badge variant="secondary" className="ml-2 text-xs">
+                  Recommended
+                </Badge>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Load GA4 properties via backend `GET /api/v1/ga4/properties` using your app JWT + stored OAuth token.
+                </span>
+              </span>
+            </label>
+
+            {ga4Mode === 'OAUTH' && (
+              <div className="space-y-2">
+                <select
+                  value={selectedGA4MeasurementId}
+                  onChange={(event) => setSelectedGA4MeasurementId(event.target.value)}
+                  disabled={!isGoogleConnected || !hasAnalyticsScope || ga4PropertiesQuery.isLoading}
+                  className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground disabled:opacity-50"
+                >
+                  <option value="">Select GA4 property...</option>
+                  {(ga4PropertiesQuery.data?.properties ?? [])
+                    .filter((property) => Boolean(property.ga_measurement_id))
+                    .map((property) => (
+                      <option key={property.ga_measurement_id} value={property.ga_measurement_id}>
+                        {property.display_name}{' '}
+                        {property.ga_measurement_id ? `- ${property.ga_measurement_id}` : '- No measurement id'}
+                      </option>
+                    ))}
+                </select>
+                {ga4PropertiesQuery.isLoading && (
+                  <p className="text-xs text-muted-foreground">Loading properties from backend...</p>
+                )}
+                {ga4PropertiesQuery.isError && (
+                  <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                    <AlertTriangle className="size-4 text-destructive" />
+                    <span className="text-xs text-destructive">
+                      Unable to load GA4 properties. Check OAuth Analytics scope and backend `/ga4/properties`.
+                    </span>
+                  </div>
+                )}
+                {!isGoogleConnected && (
+                  <p className="text-xs text-amber-500">Connect Google first to use OAuth property mode.</p>
+                )}
+                {isGoogleConnected && !hasAnalyticsScope && (
+                  <p className="text-xs text-amber-500">Analytics scope is missing. Reconnect consent is required.</p>
+                )}
+                {selectedGA4Property?.ga_measurement_id && (
+                  <p className="text-xs text-muted-foreground">
+                    Resolved measurement id: {selectedGA4Property.ga_measurement_id}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <label className="flex items-start gap-2 text-sm text-foreground">
+              <input type="radio" checked={ga4Mode === 'MANUAL'} onChange={() => setGa4Mode('MANUAL')} />
+              <span>
+                GA4 default
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Set a campaign default tracking code (you can still override per QR).
+                </span>
+              </span>
+            </label>
+
+            {ga4Mode === 'MANUAL' && (
+              <input
+                value={manualCampaignGA}
+                onChange={(event) => setManualCampaignGA(event.target.value)}
+                className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                placeholder="G-XXXXXXX"
+              />
+            )}
           </div>
-        </div>
 
-        <p className="text-sm text-muted-foreground">
-          {isCampaignSynced && campaign.googleEventId
-            ? `Linked event ID: ${campaign.googleEventId}`
-            : isCampaignSynced
-              ? 'This campaign is synced to Google Calendar.'
-              : 'This campaign is not synced to Google Calendar yet.'}
-        </p>
-
-        {campaign.calendarLastSyncedAt && (
           <p className="text-xs text-muted-foreground">
-            Last synced: {new Date(campaign.calendarLastSyncedAt).toLocaleString()}
+            Active campaign tracking: {campaign.gaMeasurementId || 'Not configured'}
+            {campaign.gaSource ? ` (${campaign.gaSource})` : ''}
           </p>
+
+          <Button
+            type="button"
+            disabled={updateCampaignGAMutation.isPending}
+            onClick={() => {
+              const oauthMeasurementId = selectedGA4Property?.ga_measurement_id;
+              const manualMeasurementId = manualCampaignGA.trim();
+
+              if (ga4Mode === 'OAUTH' && !selectedGA4MeasurementId) {
+                setErrorMessage('Please select a GA4 property for connected-account mode.');
+                return;
+              }
+
+              if (ga4Mode === 'OAUTH' && !oauthMeasurementId) {
+                setErrorMessage('Selected GA4 property does not include a measurement id.');
+                return;
+              }
+
+              if (ga4Mode === 'MANUAL' && manualMeasurementId && !isValidManualMeasurementId(manualMeasurementId)) {
+                setErrorMessage('GA4 default code must match G-XXXXXXXXXX format.');
+                return;
+              }
+
+              const cleanPayload = sanitizeCampaignPatch({
+                ga_type: ga4Mode,
+                ga_measurement_id:
+                  ga4Mode === 'OAUTH'
+                    ? oauthMeasurementId || null
+                    : ga4Mode === 'MANUAL'
+                      ? manualMeasurementId || null
+                      : null,
+                ga_property_id: ga4Mode === 'OAUTH' ? selectedGA4Property?.property_id || null : null,
+              });
+
+              updateCampaignGAMutation.mutate({
+                campaignId,
+                ...cleanPayload,
+              });
+            }}
+          >
+            <Check className="mr-2 size-4" />
+            {updateCampaignGAMutation.isPending ? 'Saving GA4...' : 'Save GA4 Settings'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <CampaignQRManager
+        campaignId={String(campaign.id)}
+        campaignDefaultTrackingCode={campaign.gaMeasurementId || undefined}
+        campaignTrackingSource={campaign.gaSource || undefined}
+        campaignDefaultTrackingPropertyId={campaign.gaPropertyId || undefined}
+        campaignGaType={(campaign.gaType || campaign.gaMode || 'MANUAL') as 'OAUTH' | 'MANUAL' | 'NO'}
+        ga4Properties={(ga4PropertiesQuery.data?.properties ?? []).filter(
+          (property) => Boolean(property.ga_measurement_id)
         )}
-
-        <div className="flex flex-wrap gap-3">
-          {isGoogleConnected && !isCampaignSynced && (
-            <button
-              type="button"
-              disabled={isCalendarActionPending}
-              onClick={() => syncCampaignMutation.mutate({ campaignId })}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {syncCampaignMutation.isPending ? 'Syncing...' : 'Sync to Google Calendar'}
-            </button>
-          )}
-
-          {isGoogleConnected && isCampaignSynced && (
-            <button
-              type="button"
-              disabled={isCalendarActionPending}
-              onClick={() => {
-                if (!window.confirm('Remove this campaign from Google Calendar?')) {
-                  return;
-                }
-                unlinkCampaignMutation.mutate({ campaignId });
-              }}
-              className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
-            >
-              {unlinkCampaignMutation.isPending ? 'Removing...' : 'Remove from Calendar'}
-            </button>
-          )}
-
-          {!isGoogleConnected && (
-            <p className="text-sm text-muted-foreground">
-              Connect Google Calendar from Dashboard Integrations to enable sync actions.
-            </p>
-          )}
-        </div>
-
-        {calendarActionMessage && (
-          <p className="text-sm text-muted-foreground">{calendarActionMessage}</p>
-        )}
-      </article>
-
-      <CampaignQRManager campaignId={String(campaign.id)} />
+      />
 
       {isEditing && (
         <form
-          className="space-y-4 rounded-md border border-muted p-4"
-          onSubmit={(event) => {
+          className="space-y-4 rounded-lg border bg-card p-4"
+          onSubmit={async (event) => {
             event.preventDefault();
             const form = event.currentTarget;
             const formData = new FormData(form);
@@ -273,6 +652,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
             const description = String(formData.get('description') || '').trim();
             const startDate = String(formData.get('start_date') || '');
             const endDate = String(formData.get('end_date') || '');
+            const rawGaMeasurementId = String(formData.get('ga_measurement_id') || '').trim();
 
             if (!name) {
               setErrorMessage('Campaign name is required.');
@@ -284,17 +664,44 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
               return;
             }
 
-            updateCampaignMutation.mutate({
-              campaignId,
+            if (rawGaMeasurementId && !isValidManualMeasurementId(rawGaMeasurementId)) {
+              setErrorMessage('GA4 default code must match G-XXXXXXXXXX format.');
+              return;
+            }
+
+            const corePayload = sanitizeCampaignPatch({
               name,
-              status: status as 'active' | 'paused' | 'draft' | 'archived',
-              description: description || undefined,
-              start_date: startDate || undefined,
-              end_date: endDate || undefined,
+              status,
+              description,
+              start_date: startDate,
+              end_date: endDate,
             });
-          }}
-        >
-          <h2 className="text-lg font-semibold text-foreground">Edit campaign</h2>
+
+            try {
+              await updateCampaignMutation.mutateAsync({
+                campaignId,
+                ...corePayload,
+              });
+
+              const currentGa = (campaign.gaMeasurementId || '').trim();
+              if (rawGaMeasurementId && rawGaMeasurementId !== currentGa) {
+                const gaPayload = sanitizeCampaignPatch({
+                  ga_type: 'MANUAL',
+                  ga_property_id: null,
+                  ga_measurement_id: rawGaMeasurementId,
+                });
+
+                await updateCampaignGAMutation.mutateAsync({
+                  campaignId,
+                  ...gaPayload,
+                });
+              }
+            } catch {
+              // Error states are handled by mutation onError callbacks.
+            }
+           }}
+         >
+           <h2 className="text-lg font-semibold text-foreground">Edit Campaign</h2>
 
           <label className="block text-sm text-foreground">
             Name
@@ -351,24 +758,34 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
             </label>
           </div>
 
-          <div className="flex gap-3">
-            <button
-              type="submit"
-              disabled={updateCampaignMutation.isPending}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {updateCampaignMutation.isPending ? 'Saving...' : 'Save changes'}
-            </button>
-            <button
+          <label className="block text-sm text-foreground">
+            GA4 default code
+            <input
+              name="ga_measurement_id"
+              defaultValue={campaign.gaMeasurementId || ''}
+              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
+              placeholder="G-XXXXXXX"
+            />
+          </label>
+
+          <p className="text-xs text-muted-foreground">
+            Campaign content is edited here. GA4 settings are managed in the section above.
+          </p>
+
+            <div className="flex gap-3">
+            <Button type="submit" disabled={updateCampaignMutation.isPending}>
+              {updateCampaignMutation.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={() => {
                 setIsEditing(false);
                 setErrorMessage(null);
               }}
-              className="rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -379,37 +796,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
         </div>
       )}
 
-      <div className="flex gap-3">
-        <button
-          type="button"
-          onClick={() => {
-            setIsEditing((prev) => !prev);
-            setErrorMessage(null);
-          }}
-          className="inline-flex items-center rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm text-primary hover:bg-primary/20"
-        >
-          {isEditing ? 'Close Edit' : 'Edit Campaign'}
-        </button>
-        <button
-          type="button"
-          disabled={deleteCampaignMutation.isPending}
-          onClick={() => {
-            if (!window.confirm('Delete this campaign? This action cannot be undone.')) {
-              return;
-            }
-            deleteCampaignMutation.mutate({ campaignId });
-          }}
-          className="inline-flex items-center rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive hover:bg-destructive/20 disabled:opacity-50"
-        >
-          {deleteCampaignMutation.isPending ? 'Deleting...' : 'Delete Campaign'}
-        </button>
-        <Link
-          href="/dashboard"
-          className="inline-flex items-center rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
-        >
-          Back to Dashboard
-        </Link>
-      </div>
+      <div className="hidden" />
     </section>
   );
 }
