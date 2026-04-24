@@ -119,7 +119,7 @@ function ChartTooltipContent({
   nameKey,
   labelKey,
 }: RechartsPrimitive.TooltipContentProps &
-  React.ComponentProps<'div'> & {
+  Omit<React.ComponentProps<'div'>, 'content'> & {
     hideLabel?: boolean
     hideIndicator?: boolean
     indicator?: 'line' | 'dot' | 'dashed'

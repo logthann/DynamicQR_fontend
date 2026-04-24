@@ -521,7 +521,7 @@ function CampaignCard({
 
       <CardFooter className="flex items-center justify-between border-t pt-4">
         <Button variant="ghost" size="sm" asChild>
-          <Link href={`/campaign-detail/${campaign.id}`}>
+          <Link href={`/dashboard?tab=campaign-detail&campaignId=${campaign.id}&campaignName=${encodeURIComponent(campaign.name || `Campaign ${campaign.id}`)}`}>
             <Eye className="mr-1.5 size-4" />
             View Details
           </Link>

@@ -5,11 +5,62 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import {
+  ChevronDown,
+  Download,
+  ExternalLink,
+  Eye,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  QrCode,
+  Trash2,
+} from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api/client';
 import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
 import type { GA4Property, QRCode } from '@/lib/api/generated/types';
 import QRCodePreview from '@/modules/qr/shared/qr-code-preview';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Switch } from '@/components/ui/switch';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 interface CampaignQRManagerProps {
   campaignId: string;
@@ -67,6 +118,13 @@ export default function CampaignQRManager({
     MANUAL_TRACKING_OPTION
   );
   const [editTrackingEnabled, setEditTrackingEnabled] = useState(true);
+  const [createQrOpen, setCreateQrOpen] = useState(false);
+  const [editQrOpen, setEditQrOpen] = useState(false);
+  const [viewQrOpen, setViewQrOpen] = useState(false);
+  const [isCreateUtmOpen, setIsCreateUtmOpen] = useState(false);
+  const [editUtmOpen, setEditUtmOpen] = useState(false);
+  const [editSyncUtmCampaign, setEditSyncUtmCampaign] = useState(true);
+  const [selectedQr, setSelectedQr] = useState<QRCode | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const campaignIdNumber = Number(campaignId);
 
@@ -255,6 +313,7 @@ export default function CampaignQRManager({
       setCreateUtmMediumCustom('');
       setIsCreateUtmCampaignSynced(true);
       setCreateUtmCampaign('');
+      setCreateQrOpen(false);
       setMessage('Created QR successfully.');
     },
     onError: (err: any) => setMessage(err?.message || 'Failed to create QR.'),
@@ -319,856 +378,738 @@ export default function CampaignQRManager({
     }
   };
 
+  const handleCreateQr = () => {
+    const name = createName.trim();
+    const destinationUrl = createDestinationUrl.trim();
+
+    if (!name) {
+      setMessage('QR name is required.');
+      return;
+    }
+    if (!destinationUrl) {
+      setMessage('Destination URL is required.');
+      return;
+    }
+
+    setMessage(null);
+    const resolvedCreateUtmMedium = resolveUtmMedium(createUtmMediumPreset, createUtmMediumCustom);
+    const resolvedCreateTracking =
+      createTrackingMode === 'campaign'
+        ? undefined
+        : createTrackingMode === 'detect'
+          ? resolveCustomTracking(MANUAL_TRACKING_OPTION, createGaMeasurementId)
+          : resolveCustomTracking(createCustomTrackingSelection, createGaMeasurementId);
+
+    if (createTrackingEnabled && createTrackingMode !== 'campaign' && !resolvedCreateTracking?.gaMeasurementId) {
+      setMessage('Tracking code is required for custom/detect tracking mode.');
+      return;
+    }
+
+    if (createUtmMediumPreset === 'custom' && !resolvedCreateUtmMedium) {
+      setMessage('UTM medium custom value is required when medium is set to Custom.');
+      return;
+    }
+
+    createMutation.mutate({
+      name,
+      destination_url: sanitizeHttpUrl(destinationUrl),
+      qr_type: createQrType,
+      ...buildQRPayload({
+        mode: createTrackingMode,
+        trackingEnabled: createTrackingEnabled,
+        customTracking: resolvedCreateTracking,
+        base: {
+          name,
+          campaign_id: Number.isFinite(campaignIdNumber) ? campaignIdNumber : undefined,
+          destination_url: destinationUrl,
+          qr_type: createQrType,
+          design_config: {
+            tracking_enabled: createTrackingEnabled,
+          },
+          utm_source: createUtmSource,
+          utm_medium: resolvedCreateUtmMedium,
+          utm_campaign: createUtmCampaign,
+          status: 'active',
+        },
+      }),
+    });
+  };
+
+  const openEditQr = (qr: QRCode) => {
+    setSelectedQr(qr);
+    setEditQrId(qr.id);
+    setEditName(qr.name || '');
+    setEditDestinationUrl(qr.destination_url || '');
+    setEditQrType((qr.qr_type || 'url') as 'url' | 'event');
+    setEditUtmSource(qr.utm_source || '');
+    setEditUtmMedium(qr.utm_medium || '');
+    setEditUtmCampaign(qr.utm_campaign || '');
+    const isTrackingEnabled = (qr.design_config as Record<string, unknown> | null)?.tracking_enabled !== false;
+    setEditTrackingEnabled(isTrackingEnabled);
+    const customGa = (qr.ga_measurement_id || '').trim();
+    setEditGaMeasurementId(customGa);
+    const matchedConnected = ga4Properties.find((property) => property.ga_measurement_id === customGa);
+    setEditCustomTrackingSelection(matchedConnected?.ga_measurement_id || MANUAL_TRACKING_OPTION);
+    setEditTrackingMode(customGa ? 'custom' : 'campaign');
+    setEditSyncUtmCampaign((qr.utm_campaign || '') === (qr.name || ''));
+    setEditUtmOpen(false);
+    setEditQrOpen(true);
+  };
+
+  const handleSaveEditQr = () => {
+    if (!editQrId) {
+      return;
+    }
+    const nextDestinationUrl = editDestinationUrl.trim();
+    const nextName = editName.trim();
+    if (!nextDestinationUrl) {
+      setMessage('Destination URL is required.');
+      return;
+    }
+    if (!nextName) {
+      setMessage('QR name is required.');
+      return;
+    }
+
+    const resolvedEditTracking =
+      editTrackingMode === 'campaign'
+        ? undefined
+        : resolveCustomTracking(editCustomTrackingSelection, editGaMeasurementId);
+
+    if (editTrackingEnabled && editTrackingMode !== 'campaign' && !resolvedEditTracking?.gaMeasurementId) {
+      setMessage('Custom tracking code is required when edit mode uses custom tracking.');
+      return;
+    }
+    setMessage(null);
+
+    updateMutation.mutate({
+      qrId: editQrId,
+      ...buildQRPayload({
+        mode: editTrackingMode,
+        trackingEnabled: editTrackingEnabled,
+        customTracking: resolvedEditTracking,
+        base: {
+          name: nextName,
+          destination_url: nextDestinationUrl,
+          qr_type: editQrType,
+          design_config: {
+            ...(selectedQr?.design_config || {}),
+            tracking_enabled: editTrackingEnabled,
+          },
+          utm_source: editUtmSource,
+          utm_medium: editUtmMedium,
+          utm_campaign: editUtmCampaign,
+          campaign_id: Number.isFinite(campaignIdNumber) ? campaignIdNumber : undefined,
+        },
+      }),
+    });
+
+    setEditQrOpen(false);
+  };
+
+  const getCreatedAt = (qr: QRCode): string => {
+    const fallback = (qr as unknown as Record<string, unknown>).created_at;
+    const raw = qr.createdAt || (typeof fallback === 'string' ? fallback : undefined);
+    if (!raw) {
+      return '-';
+    }
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? String(raw) : parsed.toLocaleDateString();
+  };
+
   return (
-    <section className="space-y-4 rounded-md border border-muted p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-foreground">QR Codes in this campaign</h2>
-        <span className="text-xs text-muted-foreground">{campaignQrs.length} item(s)</span>
-      </div>
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <CardTitle>QR Codes</CardTitle>
+            <span className="text-2xl font-bold text-muted-foreground">{campaignQrs.length} items active</span>
+          </div>
+          <Dialog open={createQrOpen} onOpenChange={setCreateQrOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 size-4" />
+                Create New QR
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="flex max-h-[85vh] max-w-lg flex-col">
+              <DialogHeader className="flex-shrink-0">
+                <DialogTitle>Create New QR Code</DialogTitle>
+                <DialogDescription>Add a new QR code to this campaign</DialogDescription>
+              </DialogHeader>
 
-      <form
-        className="grid gap-3 md:grid-cols-[1fr_auto]"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const name = createName.trim();
-          const destinationUrl = createDestinationUrl.trim();
-
-          if (!name) {
-            setMessage('QR name is required.');
-            return;
-          }
-
-          if (!destinationUrl) {
-            setMessage('Destination URL is required.');
-            return;
-          }
-          setMessage(null);
-          const resolvedCreateUtmMedium = resolveUtmMedium(createUtmMediumPreset, createUtmMediumCustom);
-          const resolvedCreateTracking =
-            createTrackingMode === 'campaign'
-              ? undefined
-              : createTrackingMode === 'detect'
-                ? resolveCustomTracking(MANUAL_TRACKING_OPTION, createGaMeasurementId)
-                : resolveCustomTracking(createCustomTrackingSelection, createGaMeasurementId);
-
-          if (
-            createTrackingEnabled &&
-            createTrackingMode !== 'campaign' &&
-            !resolvedCreateTracking?.gaMeasurementId
-          ) {
-            setMessage('Tracking code is required for custom/detect tracking mode.');
-            return;
-          }
-
-          if (createUtmMediumPreset === 'custom' && !resolvedCreateUtmMedium) {
-            setMessage('UTM medium custom value is required when medium is set to Custom.');
-            return;
-          }
-
-          createMutation.mutate({
-            name,
-            destination_url: sanitizeHttpUrl(destinationUrl),
-            qr_type: createQrType,
-            ...buildQRPayload({
-              mode: createTrackingMode,
-              trackingEnabled: createTrackingEnabled,
-              customTracking: resolvedCreateTracking,
-              base: {
-                name,
-                campaign_id: Number.isFinite(campaignIdNumber) ? campaignIdNumber : undefined,
-                destination_url: destinationUrl,
-                qr_type: createQrType,
-                design_config: {
-                  tracking_enabled: createTrackingEnabled,
-                },
-                utm_source: createUtmSource,
-                utm_medium: resolvedCreateUtmMedium,
-                utm_campaign: createUtmCampaign,
-                status: 'active',
-              },
-            }),
-          });
-        }}
-      >
-        <div className="grid gap-3 md:grid-cols-3 md:col-span-1">
-          <input
-            type="text"
-            value={createName}
-            onChange={(e) => {
-              const nextName = e.target.value;
-              setCreateName(nextName);
-              if (isCreateUtmCampaignSynced) {
-                setCreateUtmCampaign(nextName);
-              }
-            }}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="QR name"
-            required
-          />
-          <input
-            type="url"
-            value={createDestinationUrl}
-            onChange={(e) => setCreateDestinationUrl(e.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="https://example.com"
-            required
-          />
-          <select
-            value={createQrType}
-            onChange={(e) => setCreateQrType(e.target.value as 'url' | 'event')}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="url">url</option>
-            <option value="event">event</option>
-          </select>
-
-          <div className="md:col-span-3 rounded border border-muted p-2 text-xs text-muted-foreground">
-            <p className="flex flex-wrap items-center gap-2">
-              <span>
-                Campaign active tracking: {campaignDefaultTrackingCode || 'Not configured'}
-                {campaignTrackingSource ? ` (${campaignTrackingSource})` : ''}
-              </span>
-              <span className="rounded border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
-                {getTrackingBadge('campaign')}
-              </span>
-              <span
-                className={`rounded px-2 py-0.5 text-[10px] ${
-                  campaignGaType === 'OAUTH'
-                    ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                    : 'border border-amber-500/40 bg-amber-500/10 text-amber-300'
-                }`}
-              >
-                {campaignGaType === 'OAUTH' ? getTrackingBadge('connected') : getTrackingBadge('manual')}
-              </span>
-            </p>
-            <label className="mt-2 flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={createTrackingEnabled}
-                onChange={(e) => setCreateTrackingEnabled(e.target.checked)}
-              />
-              Enable tracking for this QR
-            </label>
-            <div className="mt-2 flex flex-wrap gap-4">
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="create_tracking_mode"
-                  disabled={!createTrackingEnabled}
-                  checked={createTrackingMode === 'campaign'}
-                  onChange={() => setCreateTrackingMode('campaign')}
-                />
-                Use campaign tracking code
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="create_tracking_mode"
-                  disabled={!createTrackingEnabled}
-                  checked={createTrackingMode === 'custom'}
-                  onChange={() => setCreateTrackingMode('custom')}
-                />
-                Use custom tracking code for this QR
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="create_tracking_mode"
-                  disabled={!createTrackingEnabled}
-                  checked={createTrackingMode === 'detect'}
-                  onChange={() => setCreateTrackingMode('detect')}
-                />
-                Auto-detect from destination URL
-              </label>
-
-              {createTrackingMode === 'custom' && (
-                <div className="w-full space-y-2 rounded border border-muted p-2">
-                  <label className="block text-xs text-muted-foreground">GA4 Tracking Source</label>
-                  <select
-                    value={createCustomTrackingSelection}
-                    onChange={(event) => setCreateCustomTrackingSelection(event.target.value)}
-                    disabled={!createTrackingEnabled}
-                    className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground disabled:opacity-50"
-                  >
-                    <option value="">Select connected GA4 property...</option>
-                    {ga4Properties
-                      .filter((property) => Boolean(property.ga_measurement_id))
-                      .map((property) => (
-                        <option
-                          key={property.ga_measurement_id}
-                          value={property.ga_measurement_id}
-                        >
-                          {`${getTrackingBadge('connected')} ${property.display_name} - ${property.ga_measurement_id}`}
-                        </option>
-                      ))}
-                    <option value={MANUAL_TRACKING_OPTION}>{`${getTrackingBadge('manual')} Enter manually`}</option>
-                  </select>
-
-                  {createCustomTrackingSelection === MANUAL_TRACKING_OPTION && (
-                    <input
-                      type="text"
-                      value={createGaMeasurementId}
-                      onChange={(e) => setCreateGaMeasurementId(e.target.value)}
-                      disabled={!createTrackingEnabled}
-                      className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-                      placeholder="G-XXXXXXXXXX"
+              <div className="flex-1 space-y-6 overflow-y-auto py-4">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="qr-name">QR Name</Label>
+                    <Input
+                      id="qr-name"
+                      placeholder="e.g., Translate Tool"
+                      value={createName}
+                      onChange={(e) => {
+                        const nextName = e.target.value;
+                        setCreateName(nextName);
+                        if (isCreateUtmCampaignSynced) {
+                          setCreateUtmCampaign(nextName);
+                        }
+                      }}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="qr-url">Destination URL</Label>
+                    <Input
+                      id="qr-url"
+                      placeholder="e.g., translate.google.com"
+                      value={createDestinationUrl}
+                      onChange={(e) => setCreateDestinationUrl(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="qr-type">URL Type</Label>
+                    <Select value={createQrType} onValueChange={(value) => setCreateQrType(value as 'url' | 'event')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="url">url</SelectItem>
+                        <SelectItem value="event">event</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-base font-medium">Tracking settings</Label>
+                    <Badge variant="secondary" className="text-amber-500">
+                      Active tracking: {campaignDefaultTrackingCode ? 'Configured' : 'Not configured'}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="tracking-enabled"
+                      checked={createTrackingEnabled}
+                      onCheckedChange={(checked) => setCreateTrackingEnabled(Boolean(checked))}
+                    />
+                    <Label htmlFor="tracking-enabled">Enable tracking for this QR</Label>
+                  </div>
+
+                  {createTrackingEnabled && (
+                    <RadioGroup
+                      value={createTrackingMode === 'detect' ? 'auto' : createTrackingMode}
+                      onValueChange={(value) => setCreateTrackingMode(value === 'auto' ? 'detect' : (value as TrackingMode))}
+                      className="space-y-2"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="campaign" id="tracking-campaign" />
+                        <Label htmlFor="tracking-campaign">Use campaign tracking code</Label>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="custom" id="tracking-custom" />
+                          <Label htmlFor="tracking-custom">Use custom tracking code for this QR</Label>
+                        </div>
+                        {createTrackingMode === 'custom' && (
+                          <div className="ml-6 space-y-2">
+                            <Select
+                              value={createCustomTrackingSelection}
+                              onValueChange={setCreateCustomTrackingSelection}
+                              disabled={!createTrackingEnabled}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select connected GA4 property..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {ga4Properties
+                                  .filter((property) => Boolean(property.ga_measurement_id))
+                                  .map((property) => (
+                                    <SelectItem key={property.ga_measurement_id} value={property.ga_measurement_id!}>
+                                      {`${getTrackingBadge('connected')} ${property.display_name} - ${property.ga_measurement_id}`}
+                                    </SelectItem>
+                                  ))}
+                                <SelectItem value={MANUAL_TRACKING_OPTION}>{`${getTrackingBadge('manual')} Enter manually`}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {createCustomTrackingSelection === MANUAL_TRACKING_OPTION && (
+                              <Input
+                                placeholder="Enter custom GA4 code (e.g., G-XXXXXXXXXX)"
+                                value={createGaMeasurementId}
+                                onChange={(e) => setCreateGaMeasurementId(e.target.value)}
+                                className="max-w-sm"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <RadioGroupItem value="auto" id="tracking-auto" />
+                        <Label htmlFor="tracking-auto">Auto-detect from destination URL</Label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="ml-auto h-7 text-xs"
+                          disabled={createTrackingMode !== 'detect' || createMutation.isPending}
+                          onClick={async () => {
+                            const measurementId = await detectGAFromUrl(createDestinationUrl);
+                            if (!measurementId) {
+                              return;
+                            }
+                            setCreateCustomTrackingSelection(MANUAL_TRACKING_OPTION);
+                            setCreateGaMeasurementId(measurementId);
+                            setMessage(`Detected GA4 code: ${measurementId}`);
+                          }}
+                        >
+                          Detect GA4 Code
+                        </Button>
+                      </div>
+                    </RadioGroup>
                   )}
                 </div>
-              )}
 
-              {createTrackingMode === 'detect' && (
-                <input
-                  type="text"
-                  value={createGaMeasurementId}
-                  onChange={(e) => setCreateGaMeasurementId(e.target.value)}
-                  disabled={!createTrackingEnabled}
-                  className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-                  placeholder="Detected/override GA code (G-XXXXXXXXXX)"
-                />
-              )}
+                <Collapsible open={isCreateUtmOpen} onOpenChange={setIsCreateUtmOpen}>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="flex w-full justify-between px-0">
+                      <span className="font-medium">UTM Settings</span>
+                      <ChevronDown className={`size-4 transition-transform ${isCreateUtmOpen ? 'rotate-180' : ''}`} />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-4 pt-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="utm-source">UTM Source</Label>
+                        <Input
+                          id="utm-source"
+                          value={createUtmSource}
+                          onChange={(e) => setCreateUtmSource(e.target.value)}
+                          placeholder="dynamic_qr"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="utm-medium">UTM Medium</Label>
+                        {createUtmMediumPreset === 'custom' ? (
+                          <Input
+                            id="utm-medium"
+                            value={createUtmMediumCustom}
+                            onChange={(e) => setCreateUtmMediumCustom(e.target.value)}
+                            placeholder="partner_channel"
+                          />
+                        ) : (
+                          <Select value={createUtmMediumPreset} onValueChange={(value) => setCreateUtmMediumPreset(value as UTMMediumPreset)}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="scan">scan</SelectItem>
+                              <SelectItem value="print">print</SelectItem>
+                              <SelectItem value="social">social</SelectItem>
+                              <SelectItem value="email">email</SelectItem>
+                              <SelectItem value="custom">custom</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    </div>
 
-              <button
-                type="button"
-                disabled={!createTrackingEnabled || createTrackingMode !== 'detect' || createMutation.isPending}
-                onClick={async () => {
-                  const measurementId = await detectGAFromUrl(createDestinationUrl);
-                  if (!measurementId) {
-                    return;
-                  }
-                  setCreateCustomTrackingSelection(MANUAL_TRACKING_OPTION);
-                  setCreateGaMeasurementId(measurementId);
-                  setMessage(`Detected GA4 code: ${measurementId}`);
-                }}
-                className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1 text-xs text-primary hover:bg-primary/20 disabled:opacity-50"
-              >
-                Detect GA4 Code
-              </button>
-            </div>
-          </div>
-          <details className="md:col-span-3 rounded border border-muted bg-card p-3" open>
-            <summary className="cursor-pointer text-sm font-medium text-foreground">Analytics &amp; Tracking</summary>
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">UTM Source</label>
-                <input
-                  type="text"
-                  value={createUtmSource}
-                  onChange={(e) => setCreateUtmSource(e.target.value)}
-                  className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-                  placeholder="dynamic_qr"
-                />
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="sync-utm"
+                        checked={isCreateUtmCampaignSynced}
+                        onCheckedChange={(checked) => {
+                          const next = Boolean(checked);
+                          setIsCreateUtmCampaignSynced(next);
+                          if (next) {
+                            setCreateUtmCampaign(createName);
+                          }
+                        }}
+                      />
+                      <Label htmlFor="sync-utm">Sync utm_campaign with QR name</Label>
+                    </div>
+
+                    {!isCreateUtmCampaignSynced && (
+                      <div className="space-y-2">
+                        <Label htmlFor="utm-campaign">UTM Campaign</Label>
+                        <Input
+                          id="utm-campaign"
+                          value={createUtmCampaign}
+                          onChange={(e) => setCreateUtmCampaign(e.target.value)}
+                          placeholder="Enter UTM campaign"
+                        />
+                      </div>
+                    )}
+
+                    {createUrlPreview && (
+                      <div className="rounded-md border bg-muted/50 p-3">
+                        <Label className="text-xs text-muted-foreground">URL Preview</Label>
+                        <p className="mt-1 break-all text-xs font-mono">{createUrlPreview}</p>
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">UTM Medium</label>
-                <select
-                  value={createUtmMediumPreset}
-                  onChange={(e) => setCreateUtmMediumPreset(e.target.value as UTMMediumPreset)}
-                  className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-                >
-                  <option value="scan">Scan (Default)</option>
-                  <option value="print">Print</option>
-                  <option value="social">Social</option>
-                  <option value="email">Email</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </div>
-
-              {createUtmMediumPreset === 'custom' && (
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Custom Medium Value</label>
-                  <input
-                    type="text"
-                    value={createUtmMediumCustom}
-                    onChange={(e) => setCreateUtmMediumCustom(e.target.value)}
-                    className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-                    placeholder="partner_channel"
-                  />
-                </div>
-              )}
-
-              <div className="md:col-span-3 flex items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  id="create-utm-sync-with-name"
-                  type="checkbox"
-                  checked={isCreateUtmCampaignSynced}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setIsCreateUtmCampaignSynced(checked);
-                    if (checked) {
-                      setCreateUtmCampaign(createName);
-                    }
-                  }}
-                />
-                <label htmlFor="create-utm-sync-with-name">Sync utm_campaign with QR name</label>
-              </div>
-
-              <div className="md:col-span-3">
-                <label className="mb-1 block text-xs text-muted-foreground">UTM Campaign</label>
-                <input
-                  type="text"
-                  value={createUtmCampaign}
-                  onChange={(e) => {
-                    setCreateUtmCampaign(e.target.value);
-                    if (isCreateUtmCampaignSynced) {
-                      setIsCreateUtmCampaignSynced(false);
-                    }
-                  }}
-                  disabled={isCreateUtmCampaignSynced}
-                  className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground disabled:opacity-70"
-                  placeholder="utm_campaign"
-                />
-              </div>
-
-              <p className="md:col-span-3 rounded border border-muted bg-background px-3 py-2 text-xs text-muted-foreground">
-                URL Preview: {createUrlPreview}
-              </p>
-            </div>
-          </details>
+              <DialogFooter className="flex-shrink-0 border-t pt-4">
+                <Button variant="outline" onClick={() => setCreateQrOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateQr} disabled={!createName.trim() || !createDestinationUrl.trim()}>
+                  Create QR
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
-        <button
-          type="submit"
-          disabled={createMutation.isPending}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {createMutation.isPending ? 'Creating...' : 'Create QR'}
-        </button>
-      </form>
+      </CardHeader>
 
+      <CardContent className="space-y-4">
       {qrQuery.isLoading && <p className="text-sm text-muted-foreground">Loading QR list...</p>}
       {qrQuery.isError && <p className="text-sm text-destructive">Failed to load QR list.</p>}
 
       {!qrQuery.isLoading && !qrQuery.isError && campaignQrs.length === 0 && (
-        <p className="text-sm text-muted-foreground">No QR codes in this campaign yet.</p>
+        <div className="rounded-lg border border-dashed py-10 text-center">
+          <p className="text-sm text-muted-foreground">No QR codes in this campaign yet.</p>
+        </div>
       )}
 
       {!qrQuery.isLoading && !qrQuery.isError && campaignQrs.length > 0 && (
-        <div className="space-y-3">
-          {campaignQrs.map((qr) => (
-            <QRRow
-              key={qr.id}
-              qr={qr}
-              isEditing={editQrId === qr.id}
-              editDestinationUrl={editQrId === qr.id ? editDestinationUrl : ''}
-              editName={editQrId === qr.id ? editName : ''}
-              editQrType={editQrId === qr.id ? editQrType : 'url'}
-              editUtmSource={editQrId === qr.id ? editUtmSource : ''}
-              editUtmMedium={editQrId === qr.id ? editUtmMedium : ''}
-              editUtmCampaign={editQrId === qr.id ? editUtmCampaign : ''}
-              editGaMeasurementId={editQrId === qr.id ? editGaMeasurementId : ''}
-              editTrackingMode={editQrId === qr.id ? editTrackingMode : 'campaign'}
-              editTrackingEnabled={editQrId === qr.id ? editTrackingEnabled : true}
-              onEditOpen={() => {
-                setEditQrId(qr.id);
-                setEditName(qr.name || '');
-                setEditDestinationUrl(qr.destination_url);
-                setEditQrType((qr.qr_type || 'url') as 'url' | 'event');
-                setEditUtmSource(qr.utm_source || '');
-                setEditUtmMedium(qr.utm_medium || '');
-                setEditUtmCampaign(qr.utm_campaign || '');
-                const trackingEnabledFromConfig = (qr.design_config as Record<string, unknown> | null)?.tracking_enabled;
-                const isTrackingEnabled = trackingEnabledFromConfig !== false;
-                setEditTrackingEnabled(isTrackingEnabled);
-                const customGa = (qr.ga_measurement_id || '').trim();
-                setEditGaMeasurementId(customGa);
-                const matchedConnected = ga4Properties.find(
-                  (property) => property.ga_measurement_id === customGa
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>QR Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Active</TableHead>
+                <TableHead>Tracking Status</TableHead>
+                <TableHead>UTM</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-12"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {campaignQrs.map((qr) => {
+                const isActive = (qr.status || 'active') === 'active';
+                const isTrackingEnabled =
+                  (qr.design_config as Record<string, unknown> | null)?.tracking_enabled !== false;
+                return (
+                  <TableRow key={qr.id}>
+                    <TableCell className="font-medium">{qr.name || `QR #${qr.id}`}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{qr.qr_type || 'url'}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Switch
+                        checked={isActive}
+                        disabled={statusMutation.isPending}
+                        onCheckedChange={(checked) => {
+                          setMessage(null);
+                          statusMutation.mutate({ qrId: qr.id, status: checked ? 'active' : 'paused' });
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={
+                          isTrackingEnabled
+                            ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500'
+                            : 'border-muted text-muted-foreground'
+                        }
+                      >
+                        GA4: {isTrackingEnabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {(qr.utm_source || '-') + ' / ' + (qr.utm_medium || '-') + ' / ' + (qr.utm_campaign || '-')}
+                    </TableCell>
+                    <TableCell>{getCreatedAt(qr)}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="size-8">
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => { setSelectedQr(qr); setViewQrOpen(true); }}>
+                            <Eye className="mr-2 size-4" />
+                            See QR Code
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openEditQr(qr)}>
+                            <Pencil className="mr-2 size-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Download className="mr-2 size-4" />
+                            Download PNG
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              if (typeof window !== 'undefined') {
+                                window.open(`/q/${qr.shortCode}`, '_blank', 'noopener,noreferrer');
+                              }
+                            }}
+                          >
+                            <ExternalLink className="mr-2 size-4" />
+                            Open Redirect URL
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() => {
+                              if (!window.confirm('Delete this QR code?')) {
+                                return;
+                              }
+                              setMessage(null);
+                              deleteMutation.mutate({ qrId: qr.id });
+                            }}
+                          >
+                            <Trash2 className="mr-2 size-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
                 );
-                setEditCustomTrackingSelection(
-                  matchedConnected?.ga_measurement_id || MANUAL_TRACKING_OPTION
-                );
-                setEditTrackingMode(customGa ? 'custom' : 'campaign');
-                setMessage(null);
-              }}
-              onEditCancel={() => {
-                setEditQrId(null);
-                setEditDestinationUrl('');
-                setEditName('');
-                setEditQrType('url');
-                setEditUtmSource('');
-                setEditUtmMedium('');
-                setEditUtmCampaign('');
-                setEditGaMeasurementId('');
-                setEditTrackingMode('campaign');
-                setEditCustomTrackingSelection(MANUAL_TRACKING_OPTION);
-                setEditTrackingEnabled(true);
-                setMessage(null);
-              }}
-              onEditDestinationUrlChange={setEditDestinationUrl}
-              onEditNameChange={setEditName}
-              onEditQrTypeChange={setEditQrType}
-              onEditUtmSourceChange={setEditUtmSource}
-              onEditUtmMediumChange={setEditUtmMedium}
-              onEditUtmCampaignChange={setEditUtmCampaign}
-              onEditGaMeasurementIdChange={setEditGaMeasurementId}
-              onEditTrackingModeChange={setEditTrackingMode}
-              onEditTrackingEnabledChange={setEditTrackingEnabled}
-              onDetectEditGA={async () => {
-                const measurementId = await detectGAFromUrl(editDestinationUrl);
-                if (!measurementId) {
-                  return;
-                }
-                setEditCustomTrackingSelection(MANUAL_TRACKING_OPTION);
-                setEditGaMeasurementId(measurementId);
-                setEditTrackingMode('custom');
-                setMessage(`Detected GA4 code: ${measurementId}`);
-              }}
-              onSaveEdit={() => {
-                const nextDestinationUrl = editDestinationUrl.trim();
-                const nextName = editName.trim();
-                if (!nextDestinationUrl) {
-                  setMessage('Destination URL is required.');
-                  return;
-                }
-                if (!nextName) {
-                  setMessage('QR name is required.');
-                  return;
-                }
-
-                const resolvedEditTracking =
-                  editTrackingMode === 'campaign'
-                    ? undefined
-                    : resolveCustomTracking(editCustomTrackingSelection, editGaMeasurementId);
-
-                if (
-                  editTrackingEnabled &&
-                  editTrackingMode !== 'campaign' &&
-                  !resolvedEditTracking?.gaMeasurementId
-                ) {
-                  setMessage('Custom tracking code is required when edit mode uses custom tracking.');
-                  return;
-                }
-                setMessage(null);
-
-                updateMutation.mutate({
-                  qrId: qr.id,
-                  ...buildQRPayload({
-                    mode: editTrackingMode,
-                    trackingEnabled: editTrackingEnabled,
-                    customTracking: resolvedEditTracking,
-                    base: {
-                      name: nextName,
-                      destination_url: nextDestinationUrl,
-                      qr_type: editQrType,
-                      design_config: {
-                        ...(qr.design_config || {}),
-                        tracking_enabled: editTrackingEnabled,
-                      },
-                      utm_source: editUtmSource,
-                      utm_medium: editUtmMedium,
-                      utm_campaign: editUtmCampaign,
-                      campaign_id: Number.isFinite(campaignIdNumber) ? campaignIdNumber : undefined,
-                    },
-                  }),
-                });
-              }}
-              onStatusChange={(status) => {
-                setMessage(null);
-                statusMutation.mutate({ qrId: qr.id, status });
-              }}
-              onDelete={() => {
-                if (!window.confirm('Delete this QR code?')) {
-                  return;
-                }
-                setMessage(null);
-                deleteMutation.mutate({ qrId: qr.id });
-              }}
-              onTrackingChange={(gaMeasurementId) => {
-                setMessage(null);
-                const customTracking = gaMeasurementId
-                  ? resolveCustomTracking(MANUAL_TRACKING_OPTION, gaMeasurementId)
-                  : undefined;
-                updateMutation.mutate({
-                  qrId: qr.id,
-                  ...buildQRPayload({
-                    mode: gaMeasurementId ? 'custom' : 'campaign',
-                    trackingEnabled: true,
-                    customTracking,
-                    base: {
-                      campaign_id: Number.isFinite(campaignIdNumber) ? campaignIdNumber : undefined,
-                    },
-                  }),
-                });
-              }}
-              campaignDefaultTrackingCode={campaignDefaultTrackingCode}
-              campaignTrackingSource={campaignTrackingSource}
-              campaignGaType={campaignGaType}
-              ga4Properties={ga4Properties}
-              editCustomTrackingSelection={editQrId === qr.id ? editCustomTrackingSelection : MANUAL_TRACKING_OPTION}
-              onEditCustomTrackingSelectionChange={setEditCustomTrackingSelection}
-              isBusy={
-                createMutation.isPending ||
-                updateMutation.isPending ||
-                statusMutation.isPending ||
-                deleteMutation.isPending
-              }
-            />
-          ))}
+              })}
+            </TableBody>
+          </Table>
         </div>
       )}
 
-      {message && (
-        <p className="rounded-md border border-muted bg-card p-3 text-sm text-foreground">{message}</p>
-      )}
-    </section>
-  );
-}
+      <Dialog open={editQrOpen} onOpenChange={setEditQrOpen}>
+        <DialogContent className="flex max-h-[85vh] max-w-lg flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle>Edit QR Code</DialogTitle>
+            <DialogDescription>Update the QR code details and tracking settings</DialogDescription>
+          </DialogHeader>
 
-interface QRRowProps {
-  qr: QRCode;
-  campaignDefaultTrackingCode?: string;
-  campaignTrackingSource?: string;
-  campaignGaType?: 'OAUTH' | 'MANUAL' | 'NO';
-  ga4Properties?: GA4Property[];
-  isEditing: boolean;
-  editName: string;
-  editQrType: 'url' | 'event';
-  editDestinationUrl: string;
-  editUtmSource: string;
-  editUtmMedium: string;
-  editUtmCampaign: string;
-  editGaMeasurementId: string;
-  editCustomTrackingSelection: string;
-  editTrackingMode: 'campaign' | 'custom';
-  editTrackingEnabled: boolean;
-  onEditOpen: () => void;
-  onEditCancel: () => void;
-  onEditNameChange: (value: string) => void;
-  onEditQrTypeChange: (value: 'url' | 'event') => void;
-  onEditDestinationUrlChange: (value: string) => void;
-  onEditUtmSourceChange: (value: string) => void;
-  onEditUtmMediumChange: (value: string) => void;
-  onEditUtmCampaignChange: (value: string) => void;
-  onEditGaMeasurementIdChange: (value: string) => void;
-  onEditCustomTrackingSelectionChange: (value: string) => void;
-  onEditTrackingModeChange: (value: 'campaign' | 'custom') => void;
-  onEditTrackingEnabledChange: (value: boolean) => void;
-  onDetectEditGA: () => void;
-  onSaveEdit: () => void;
-  onStatusChange: (status: 'active' | 'paused' | 'archived') => void;
-  onDelete: () => void;
-  onTrackingChange: (gaMeasurementId?: string) => void;
-  isBusy: boolean;
-}
+          <div className="flex-1 space-y-6 overflow-y-auto py-4">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-qr-name">QR Name</Label>
+                <Input id="edit-qr-name" value={editName} onChange={(e) => {
+                  const next = e.target.value;
+                  setEditName(next);
+                  if (editSyncUtmCampaign) {
+                    setEditUtmCampaign(next);
+                  }
+                }} placeholder="e.g., Translate Tool" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-qr-url">Destination URL</Label>
+                <Input id="edit-qr-url" value={editDestinationUrl} onChange={(e) => setEditDestinationUrl(e.target.value)} placeholder="e.g., translate.google.com" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-qr-type">URL Type</Label>
+                <Select value={editQrType} onValueChange={(value) => setEditQrType(value as 'url' | 'event')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="url">url</SelectItem>
+                    <SelectItem value="event">event</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
-function QRRow({
-  qr,
-  campaignDefaultTrackingCode,
-  campaignTrackingSource,
-  campaignGaType = 'MANUAL',
-  ga4Properties = [],
-  isEditing,
-  editName,
-  editQrType,
-  editDestinationUrl,
-  editUtmSource,
-  editUtmMedium,
-  editUtmCampaign,
-  editGaMeasurementId,
-  editCustomTrackingSelection,
-  editTrackingMode,
-  editTrackingEnabled,
-  onEditOpen,
-  onEditCancel,
-  onEditNameChange,
-  onEditQrTypeChange,
-  onEditDestinationUrlChange,
-  onEditUtmSourceChange,
-  onEditUtmMediumChange,
-  onEditUtmCampaignChange,
-  onEditGaMeasurementIdChange,
-  onEditCustomTrackingSelectionChange,
-  onEditTrackingModeChange,
-  onEditTrackingEnabledChange,
-  onDetectEditGA,
-  onSaveEdit,
-  onStatusChange,
-  onDelete,
-  onTrackingChange,
-  isBusy,
-}: QRRowProps) {
-  const hasCustomTracking = Boolean((qr.ga_measurement_id || '').trim());
-  const isTrackingEnabled =
-    (qr.design_config as Record<string, unknown> | null)?.tracking_enabled !== false;
-  const [isTrackingEditorOpen, setIsTrackingEditorOpen] = useState(false);
-  const [trackingDraft, setTrackingDraft] = useState(qr.ga_measurement_id || '');
-
-  const effectiveTrackingCode = !isTrackingEnabled
-    ? undefined
-    : hasCustomTracking
-    ? qr.ga_measurement_id
-    : campaignDefaultTrackingCode || undefined;
-
-  const trackingSourceLabel = !isTrackingEnabled
-    ? 'Disabled'
-    : hasCustomTracking
-    ? 'Custom'
-    : campaignDefaultTrackingCode
-    ? `Campaign (${campaignTrackingSource || 'default'})`
-    : 'Not configured';
-
-  const sourceBadge = !isTrackingEnabled
-    ? '[Manual]'
-    : hasCustomTracking
-      ? qr.ga_type === 'OAUTH'
-        ? '[Connected]'
-        : '[Manual]'
-      : '[Campaign Default]';
-
-  return (
-    <article className="space-y-3 rounded-md border border-muted p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <p className={`text-xs ${isTrackingEnabled ? 'text-emerald-300' : 'text-amber-300'}`}>
-            Tracking: {isTrackingEnabled ? 'Enabled' : 'Disabled'}
-          </p>
-          <p className="text-sm font-medium text-foreground">{qr.name || `QR #${qr.id}`}</p>
-          <p className="text-sm font-medium text-foreground">/q/{qr.shortCode}</p>
-          <p className="break-all text-xs text-muted-foreground">{qr.destination_url}</p>
-          <p className="text-xs text-muted-foreground">Type: {qr.qr_type || 'url'}</p>
-          {(qr.utm_source || qr.utm_medium || qr.utm_campaign) && (
-            <p className="text-xs text-muted-foreground">
-              UTM: {qr.utm_source || '-'} / {qr.utm_medium || '-'} / {qr.utm_campaign || '-'}
-            </p>
-          )}
-          <p className="text-xs text-muted-foreground">
-            Tracking source: {trackingSourceLabel}
-            <span className="ml-2 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-              {sourceBadge}
-            </span>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Active tracking code: {effectiveTrackingCode || '-'}
-          </p>
-          <p className="text-xs text-muted-foreground">Created {new Date(qr.createdAt).toLocaleDateString()}</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={qr.status || 'active'}
-            onChange={(event) => onStatusChange(event.target.value as 'active' | 'paused' | 'archived')}
-            disabled={isBusy}
-            className="rounded border border-muted bg-background px-2 py-1 text-xs text-foreground"
-          >
-            <option value="active">active</option>
-            <option value="paused">paused</option>
-            <option value="archived">archived</option>
-          </select>
-
-          {!isEditing ? (
-            <button
-              type="button"
-              onClick={onEditOpen}
-              disabled={isBusy}
-              className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1 text-xs text-primary hover:bg-primary/20 disabled:opacity-50"
-            >
-              Edit
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onEditCancel}
-              disabled={isBusy}
-              className="rounded-md border border-muted bg-background px-3 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={isBusy}
-            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs text-destructive hover:bg-destructive/20 disabled:opacity-50"
-          >
-            Delete
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (hasCustomTracking) {
-                onTrackingChange(undefined);
-                setTrackingDraft('');
-                setIsTrackingEditorOpen(false);
-                return;
-              }
-
-              setIsTrackingEditorOpen((prev) => !prev);
-            }}
-            disabled={isBusy}
-            className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1 text-xs text-primary hover:bg-primary/20 disabled:opacity-50"
-          >
-            {hasCustomTracking ? 'Use Campaign Tracking' : isTrackingEditorOpen ? 'Close Tracking Editor' : 'Set Custom Tracking'}
-          </button>
-        </div>
-      </div>
-
-      {isEditing && (
-        <div className="grid gap-2 md:grid-cols-2">
-          <label className="flex items-center gap-2 text-sm text-foreground md:col-span-2">
-            <input
-              type="checkbox"
-              checked={editTrackingEnabled}
-              onChange={(e) => onEditTrackingEnabledChange(e.target.checked)}
-            />
-            Enable tracking for this QR
-          </label>
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="radio"
-              name={`edit_tracking_mode_${qr.id}`}
-              checked={editTrackingMode === 'campaign'}
-              disabled={!editTrackingEnabled}
-              onChange={() => onEditTrackingModeChange('campaign')}
-            />
-            Use campaign tracking
-          </label>
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="radio"
-              name={`edit_tracking_mode_${qr.id}`}
-              checked={editTrackingMode === 'custom'}
-              disabled={!editTrackingEnabled}
-              onChange={() => onEditTrackingModeChange('custom')}
-            />
-            Use custom tracking
-          </label>
-          {editTrackingMode === 'campaign' && (
-            <p className="md:col-span-2 rounded border border-muted bg-background px-3 py-2 text-xs text-muted-foreground">
-              Inherited from campaign ({campaignGaType}): {campaignDefaultTrackingCode || 'Not configured'}
-              <span className="ml-2 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                [Campaign Default]
-              </span>
-            </p>
-          )}
-
-          {editTrackingMode === 'custom' && (
-            <div className="md:col-span-2 space-y-2 rounded border border-muted p-2">
-              <label className="block text-xs text-muted-foreground">GA4 Tracking Source</label>
-              <select
-                value={editCustomTrackingSelection}
-                onChange={(event) => onEditCustomTrackingSelectionChange(event.target.value)}
-                disabled={!editTrackingEnabled}
-                className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground disabled:opacity-50"
-              >
-                <option value="">Select connected GA4 property...</option>
-                {ga4Properties
-                  .filter((property) => Boolean(property.ga_measurement_id))
-                  .map((property) => (
-                    <option key={property.ga_measurement_id} value={property.ga_measurement_id}>
-                      {`[Connected] ${property.display_name} - ${property.ga_measurement_id}`}
-                    </option>
-                  ))}
-                <option value={MANUAL_TRACKING_OPTION}>[Manual] Enter manually</option>
-              </select>
-
-              {editCustomTrackingSelection === MANUAL_TRACKING_OPTION && (
-                <input
-                  type="text"
-                  value={editGaMeasurementId}
-                  onChange={(e) => onEditGaMeasurementIdChange(e.target.value)}
-                  disabled={!editTrackingEnabled}
-                  className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-                  placeholder="G-XXXXXXXXXX"
+            <div className="space-y-4 rounded-lg border p-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">Tracking settings</Label>
+                <Badge variant="secondary" className="text-amber-500">
+                  Active tracking: {campaignDefaultTrackingCode ? 'Configured' : 'Not configured'}
+                </Badge>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="edit-tracking-enabled"
+                  checked={editTrackingEnabled}
+                  onCheckedChange={(checked) => setEditTrackingEnabled(Boolean(checked))}
                 />
+                <Label htmlFor="edit-tracking-enabled">Enable tracking for this QR</Label>
+              </div>
+
+              {editTrackingEnabled && (
+                <RadioGroup value={editTrackingMode} onValueChange={(value) => setEditTrackingMode(value as 'campaign' | 'custom')} className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="campaign" id="edit-tracking-campaign" />
+                    <Label htmlFor="edit-tracking-campaign">Use campaign tracking code</Label>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="custom" id="edit-tracking-custom" />
+                      <Label htmlFor="edit-tracking-custom">Use custom tracking code for this QR</Label>
+                    </div>
+                    {editTrackingMode === 'custom' && (
+                      <div className="ml-6 space-y-2">
+                        <Select
+                          value={editCustomTrackingSelection}
+                          onValueChange={setEditCustomTrackingSelection}
+                          disabled={!editTrackingEnabled}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select connected GA4 property..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ga4Properties
+                              .filter((property) => Boolean(property.ga_measurement_id))
+                              .map((property) => (
+                                <SelectItem key={property.ga_measurement_id} value={property.ga_measurement_id!}>
+                                  {`[Connected] ${property.display_name} - ${property.ga_measurement_id}`}
+                                </SelectItem>
+                              ))}
+                            <SelectItem value={MANUAL_TRACKING_OPTION}>[Manual] Enter manually</SelectItem>
+                          </SelectContent>
+                        </Select>
+
+                        {editCustomTrackingSelection === MANUAL_TRACKING_OPTION && (
+                          <Input
+                            placeholder="Enter custom GA4 code (e.g., G-XXXXXXXXXX)"
+                            value={editGaMeasurementId}
+                            onChange={(e) => setEditGaMeasurementId(e.target.value)}
+                            className="max-w-sm"
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs text-muted-foreground">Auto-detect from destination URL</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto h-7 text-xs"
+                      onClick={async () => {
+                        const measurementId = await detectGAFromUrl(editDestinationUrl);
+                        if (!measurementId) {
+                          return;
+                        }
+                        setEditCustomTrackingSelection(MANUAL_TRACKING_OPTION);
+                        setEditGaMeasurementId(measurementId);
+                        setEditTrackingMode('custom');
+                        setMessage(`Detected GA4 code: ${measurementId}`);
+                      }}
+                    >
+                      Detect GA4 Code
+                    </Button>
+                  </div>
+                </RadioGroup>
               )}
             </div>
-          )}
-          <button
-            type="button"
-            onClick={onDetectEditGA}
-            disabled={!editTrackingEnabled || isBusy}
-            className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-xs text-primary hover:bg-primary/20 disabled:opacity-50 md:col-span-2"
-          >
-            Auto-detect GA4 code from destination URL
-          </button>
-          <input
-            type="text"
-            value={editName}
-            onChange={(e) => onEditNameChange(e.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="QR name"
-            required
-          />
-          <select
-            value={editQrType}
-            onChange={(e) => onEditQrTypeChange(e.target.value as 'url' | 'event')}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="url">url</option>
-            <option value="event">event</option>
-          </select>
-          <input
-            type="url"
-            value={editDestinationUrl}
-            onChange={(e) => onEditDestinationUrlChange(e.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="https://example.com"
-            required
-          />
-          <input
-            type="text"
-            value={editUtmSource}
-            onChange={(e) => onEditUtmSourceChange(e.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="utm_source"
-          />
-          <input
-            type="text"
-            value={editUtmMedium}
-            onChange={(e) => onEditUtmMediumChange(e.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="utm_medium"
-          />
-          <input
-            type="text"
-            value={editUtmCampaign}
-            onChange={(e) => onEditUtmCampaignChange(e.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="utm_campaign"
-          />
-          <button
-            type="button"
-            onClick={onSaveEdit}
-            disabled={isBusy}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 md:col-span-2"
-          >
-            Save
-          </button>
-        </div>
-      )}
 
-      <QRCodePreview shortCode={qr.shortCode} fileLabel={qr.name || qr.shortCode} className="mt-1" />
+            <Collapsible open={editUtmOpen} onOpenChange={setEditUtmOpen}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" className="flex w-full justify-between px-0">
+                  <span className="font-medium">UTM Settings</span>
+                  <ChevronDown className={`size-4 transition-transform ${editUtmOpen ? 'rotate-180' : ''}`} />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-utm-source">UTM Source</Label>
+                    <Input
+                      id="edit-utm-source"
+                      value={editUtmSource}
+                      onChange={(e) => setEditUtmSource(e.target.value)}
+                      placeholder="dynamic_qr"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-utm-medium">UTM Medium</Label>
+                    <Input
+                      id="edit-utm-medium"
+                      value={editUtmMedium}
+                      onChange={(e) => setEditUtmMedium(e.target.value)}
+                      placeholder="scan"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-sync-utm"
+                    checked={editSyncUtmCampaign}
+                    onCheckedChange={(checked) => {
+                      const next = Boolean(checked);
+                      setEditSyncUtmCampaign(next);
+                      if (next) {
+                        setEditUtmCampaign(editName);
+                      }
+                    }}
+                  />
+                  <Label htmlFor="edit-sync-utm">Sync utm_campaign with QR name</Label>
+                </div>
+                {!editSyncUtmCampaign && (
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-utm-campaign">UTM Campaign</Label>
+                    <Input
+                      id="edit-utm-campaign"
+                      value={editUtmCampaign}
+                      onChange={(e) => setEditUtmCampaign(e.target.value)}
+                      placeholder="Enter UTM campaign"
+                    />
+                  </div>
+                )}
+                <div className="rounded-md border bg-muted/50 p-3">
+                  <Label className="text-xs text-muted-foreground">URL Preview</Label>
+                  <p className="mt-1 break-all text-xs font-mono">
+                    {buildUrlPreview(editDestinationUrl, editUtmSource, editUtmMedium, editUtmCampaign)}
+                  </p>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
 
-      {isTrackingEditorOpen && !hasCustomTracking && (
-        <div className="flex flex-col gap-2 rounded border border-muted p-2 md:flex-row md:items-center">
-          <input
-            type="text"
-            value={trackingDraft}
-            onChange={(event) => setTrackingDraft(event.target.value)}
-            className="w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-            placeholder="G-XXXXXXXXXX"
-          />
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={() => {
-              const value = trackingDraft.trim();
-              if (!value) {
-                return;
-              }
-              onTrackingChange(value);
-              setTrackingDraft(value);
-              setIsTrackingEditorOpen(false);
-            }}
-            className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            Apply Custom Tracking
-          </button>
-        </div>
+          <DialogFooter className="flex-shrink-0 border-t pt-4">
+            <Button variant="outline" onClick={() => setEditQrOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEditQr} disabled={!editName.trim() || !editDestinationUrl.trim()}>
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={viewQrOpen} onOpenChange={setViewQrOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>QR Code Preview</DialogTitle>
+            <DialogDescription>{selectedQr?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-4 py-6">
+            {selectedQr ? (
+              <QRCodePreview shortCode={selectedQr.shortCode} fileLabel={selectedQr.name || selectedQr.shortCode} />
+            ) : (
+              <div className="flex size-48 items-center justify-center rounded-lg border-2 border-dashed bg-muted">
+                <QrCode className="size-24 text-muted-foreground" />
+              </div>
+            )}
+            <div className="w-full space-y-2 text-center">
+              <p className="text-sm font-medium">{selectedQr?.name}</p>
+              <p className="break-all text-xs text-muted-foreground">{selectedQr?.destination_url}</p>
+            </div>
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button className="w-full">
+              <Download className="mr-2 size-4" />
+              Download PNG
+            </Button>
+            <Button variant="outline" className="w-full" onClick={() => setViewQrOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {message && (
+        <p className="rounded-md border border-muted bg-muted/20 p-3 text-sm text-foreground">{message}</p>
       )}
-    </article>
+      </CardContent>
+    </Card>
   );
 }

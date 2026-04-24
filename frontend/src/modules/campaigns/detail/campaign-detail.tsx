@@ -17,6 +17,7 @@ import {
   Calendar,
   Check,
   FileText,
+  MoreHorizontal,
   Pencil,
   RefreshCw,
   Trash2,
@@ -33,6 +34,34 @@ import { useIntegrationContext } from '@/state/integration-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
 interface CampaignDetailProps {
   campaignId: string;
@@ -103,7 +132,11 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   const [ga4Mode, setGa4Mode] = useState<GA4Mode>('MANUAL');
   const [selectedGA4MeasurementId, setSelectedGA4MeasurementId] = useState<string>('');
   const [manualCampaignGA, setManualCampaignGA] = useState<string>('');
-  const [isEditing, setIsEditing] = useState(false);
+  const [editCampaignOpen, setEditCampaignOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [calendarActionMessage, setCalendarActionMessage] = useState<string | null>(null);
 
@@ -119,7 +152,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     mutationFn: apiClient.updateCampaign,
     onSuccess: (updated) => {
       cacheInvalidations.updateCampaign(String(updated.id));
-      setIsEditing(false);
+      setEditCampaignOpen(false);
       setErrorMessage(null);
     },
     onError: (err: any) => {
@@ -199,6 +232,10 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     setGa4Mode(nextMode);
     setSelectedGA4MeasurementId(campaign.gaMeasurementId || '');
     setManualCampaignGA(campaign.gaMeasurementId || '');
+    setEditName(campaign.name || '');
+    setEditDescription(campaign.description || '');
+    setEditStartDate(campaign.startDate || '');
+    setEditEndDate(campaign.endDate || '');
   }, [campaign?.id, campaign?.gaType, campaign?.gaMode, campaign?.gaPropertyId, campaign?.gaMeasurementId]);
 
   const ga4PropertiesQuery = useQuery({
@@ -273,12 +310,37 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     Boolean(campaign?.googleEventId);
   const isCalendarActionPending = syncCampaignMutation.isPending || unlinkCampaignMutation.isPending;
 
-  const formDefaults = {
-    name: campaign?.name || '',
-    status: campaign?.status || 'active',
-    description: campaign?.description || '',
-    startDate: campaign?.startDate || '',
-    endDate: campaign?.endDate || '',
+  const handleSaveCampaignEdit = async () => {
+    const name = editName.trim();
+    const description = editDescription.trim();
+    const startDate = editStartDate;
+    const endDate = editEndDate;
+
+    if (!name) {
+      setErrorMessage('Campaign name is required.');
+      return;
+    }
+
+    if (startDate && endDate && endDate < startDate) {
+      setErrorMessage('End date must be on or after start date.');
+      return;
+    }
+
+    try {
+      await updateCampaignMutation.mutateAsync({
+        campaignId,
+        ...sanitizeCampaignPatch({
+          name,
+          description,
+          start_date: startDate,
+          end_date: endDate,
+        }),
+      });
+      setEditCampaignOpen(false);
+      setErrorMessage(null);
+    } catch {
+      // Error UI is handled by mutation callbacks.
+    }
   };
 
   if (!campaign) {
@@ -298,67 +360,158 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   return (
     <section className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-3xl font-bold tracking-tight">{campaign.name}</h1>
-          <span className="text-sm text-muted-foreground">(ID: {campaign.id})</span>
-          <Badge
-            variant="outline"
-            className={
-              (campaign.status || 'active') === 'active'
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500'
-                : 'border-amber-500/50 bg-amber-500/10 text-amber-500'
-            }
-          >
-            {(campaign.status || 'active').toUpperCase()}
-          </Badge>
+        <div className="flex items-center gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold tracking-tight">{campaign.name}</h1>
+              <span className="text-sm text-muted-foreground">(ID: {campaign.id})</span>
+              <Badge
+                variant="outline"
+                className={
+                  (campaign.status || 'active') === 'active'
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+                    : 'border-amber-500/50 bg-amber-500/10 text-amber-500'
+                }
+              >
+                {(campaign.status || 'active').toUpperCase()}
+              </Badge>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setIsEditing((prev) => !prev);
-              setErrorMessage(null);
-            }}
-          >
-            <Pencil className="mr-2 size-4" />
-            {isEditing ? 'Close Edit' : 'Edit Campaign'}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={deleteCampaignMutation.isPending}
-            onClick={() => {
-              if (!window.confirm('Delete this campaign? This action cannot be undone.')) {
-                return;
-              }
-              deleteCampaignMutation.mutate({ campaignId });
-            }}
-            className="border-destructive/40 text-destructive hover:bg-destructive/10"
-          >
-            <Trash2 className="mr-2 size-4" />
-            {deleteCampaignMutation.isPending ? 'Deleting...' : 'Delete'}
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/dashboard">
-              <ArrowLeft className="mr-2 size-4" />
-              Back to Dashboard
-            </Link>
-          </Button>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              Settings
+              <MoreHorizontal className="ml-2 size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem
+              onSelect={() => {
+                setEditCampaignOpen(true);
+                setErrorMessage(null);
+              }}
+            >
+              <Pencil className="mr-2 size-4" />
+              Edit Campaign
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard?tab=campaigns">
+                <ArrowLeft className="mr-2 size-4" />
+                Back to Dashboard
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <DropdownMenuItem
+                  onSelect={(event) => event.preventDefault()}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 size-4" />
+                  Delete Campaign
+                </DropdownMenuItem>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete Campaign</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete this campaign? This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    disabled={deleteCampaignMutation.isPending}
+                    onClick={() => deleteCampaignMutation.mutate({ campaignId })}
+                  >
+                    {deleteCampaignMutation.isPending ? 'Deleting...' : 'Delete'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      <Dialog open={editCampaignOpen} onOpenChange={setEditCampaignOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Campaign</DialogTitle>
+            <DialogDescription>
+              Update campaign details. Click save when you&apos;re done.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Campaign Name</Label>
+              <Input
+                id="edit-name"
+                value={editName}
+                onChange={(event) => setEditName(event.target.value)}
+                placeholder="Enter campaign name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">Description</Label>
+              <Input
+                id="edit-description"
+                value={editDescription}
+                onChange={(event) => setEditDescription(event.target.value)}
+                placeholder="Enter campaign description"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-start-date">Start Date</Label>
+                <Input
+                  id="edit-start-date"
+                  type="date"
+                  value={editStartDate}
+                  onChange={(event) => setEditStartDate(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-end-date">End Date</Label>
+                <Input
+                  id="edit-end-date"
+                  type="date"
+                  value={editEndDate}
+                  onChange={(event) => setEditEndDate(event.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditCampaignOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveCampaignEdit} disabled={updateCampaignMutation.isPending}>
+              {updateCampaignMutation.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.86fr)_minmax(0,1fr)]">
+        <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Campaign Details</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <Calendar className="size-5 text-muted-foreground" />
               <span className="text-sm font-medium">Timeline:</span>
-              <span className="text-sm text-muted-foreground">{campaign.startDate || '-'}</span>
+              <span className="rounded-md border bg-muted/30 px-2 py-1 text-sm text-muted-foreground">
+                Start: {campaign.startDate || '-'}
+              </span>
               <span className="text-muted-foreground">{'->'}</span>
-              <span className="text-sm text-muted-foreground">{campaign.endDate || '-'}</span>
+              <span className="rounded-md border bg-muted/30 px-2 py-1 text-sm text-muted-foreground">
+                End: {campaign.endDate || '-'}
+              </span>
             </div>
 
             <div className="space-y-2">
@@ -375,7 +528,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
 
         <Card className="flex flex-col">
           <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
+            <div className="space-y-3">
               <CardTitle className="text-lg">Status</CardTitle>
               <Badge
                 variant="secondary"
@@ -386,74 +539,72 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="flex flex-1 flex-col space-y-4">
-            <div className="space-y-3">
-              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Integrations</span>
+          <CardContent className="flex flex-1 flex-col space-y-3">
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Integration Hub</p>
 
-              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <Calendar className="size-4 text-muted-foreground" />
-                  <span className="text-sm">Google Calendar</span>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-md border bg-background px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="size-4 text-muted-foreground" />
+                    <span className="text-sm">Google Calendar</span>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={
+                      isGoogleConnected
+                        ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-xs'
+                        : 'text-xs text-muted-foreground'
+                    }
+                  >
+                    {isGoogleConnected ? 'oauth connected' : 'not linked'}
+                  </Badge>
                 </div>
-                <Badge
-                  variant="outline"
-                  className={
-                    isGoogleConnected
-                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-xs'
-                      : 'text-xs text-muted-foreground'
-                  }
-                >
-                  {isGoogleConnected ? 'Connected' : 'Not connected'}
-                </Badge>
-              </div>
 
-              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <BarChart3 className="size-4 text-muted-foreground" />
-                  <span className="text-sm">Google Analytics</span>
+                <div className="flex items-center justify-between rounded-md border bg-background px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="size-4 text-muted-foreground" />
+                    <span className="text-sm">Google Auto Calendar</span>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={
+                      hasCalendarScope
+                        ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-xs'
+                        : 'text-xs text-muted-foreground'
+                    }
+                  >
+                    {hasCalendarScope ? 'connected' : 'not linked'}
+                  </Badge>
                 </div>
-                <Badge
-                  variant="outline"
-                  className={
-                    hasAnalyticsScope
-                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-xs'
-                      : 'text-xs text-muted-foreground'
-                  }
-                >
-                  {hasAnalyticsScope ? 'Connected' : 'Missing scope'}
-                </Badge>
               </div>
-            </div>
 
-            <div className="flex-1" />
-
-            <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="size-4 text-amber-500" />
-                <span className="text-sm font-medium text-amber-500">Calendar Sync</span>
-              </div>
-              <p className="text-xs text-amber-500/80">
-                {integrationsLoading
-                  ? 'Checking Google connection...'
-                  : isCampaignSynced
-                    ? `Status: ${calendarSyncStatus.replace('_', ' ')}`
-                    : 'Campaign is not synced yet.'}
-              </p>
-              {campaign.calendarLastSyncedAt && (
-                <p className="text-xs text-amber-500/80">
-                  Last synced: {new Date(campaign.calendarLastSyncedAt).toLocaleString()}
+              <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="size-4 text-amber-500" />
+                  <span className="text-xs font-medium text-amber-600">Sync Required</span>
+                </div>
+                <p className="text-xs text-amber-700/80">
+                  {integrationsLoading
+                    ? 'Checking Google connection...'
+                    : isCampaignSynced
+                      ? `Status: ${calendarSyncStatus.replace('_', ' ')}`
+                      : 'Status: not linked'}
                 </p>
-              )}
-              {connectedAccountEmail && (
-                <p className="text-xs text-amber-500/80">Account: {connectedAccountEmail}</p>
-              )}
+                {campaign.calendarLastSyncedAt && (
+                  <p className="text-xs text-amber-700/80">
+                    Last synced: {new Date(campaign.calendarLastSyncedAt).toLocaleString()}
+                  </p>
+                )}
+                {connectedAccountEmail && <p className="text-xs text-amber-700/80">Account: {connectedAccountEmail}</p>}
+              </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-2 pt-1">
                 {isGoogleConnected && !isCampaignSynced && (
                   <Button
                     size="sm"
                     variant="outline"
-                    className="w-full border-amber-500/30 text-amber-500 hover:bg-amber-500/10"
+                    className="w-full border-muted text-muted-foreground hover:bg-muted"
                     disabled={isCalendarActionPending}
                     onClick={() => syncCampaignMutation.mutate({ campaignId })}
                   >
@@ -479,11 +630,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
                   </Button>
                 )}
 
-                {!isGoogleConnected && (
-                  <p className="w-full text-xs text-muted-foreground">
-                    {connectedProviderLabel}
-                  </p>
-                )}
+                {!isGoogleConnected && <p className="text-xs text-muted-foreground">{connectedProviderLabel}</p>}
               </div>
             </div>
           </CardContent>
@@ -640,163 +787,11 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
         )}
       />
 
-      {isEditing && (
-        <form
-          className="space-y-4 rounded-lg border bg-card p-4"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            const formData = new FormData(form);
-            const name = String(formData.get('name') || '').trim();
-            const status = String(formData.get('status') || 'active');
-            const description = String(formData.get('description') || '').trim();
-            const startDate = String(formData.get('start_date') || '');
-            const endDate = String(formData.get('end_date') || '');
-            const rawGaMeasurementId = String(formData.get('ga_measurement_id') || '').trim();
-
-            if (!name) {
-              setErrorMessage('Campaign name is required.');
-              return;
-            }
-
-            if (startDate && endDate && endDate < startDate) {
-              setErrorMessage('End date must be on or after start date.');
-              return;
-            }
-
-            if (rawGaMeasurementId && !isValidManualMeasurementId(rawGaMeasurementId)) {
-              setErrorMessage('GA4 default code must match G-XXXXXXXXXX format.');
-              return;
-            }
-
-            const corePayload = sanitizeCampaignPatch({
-              name,
-              status,
-              description,
-              start_date: startDate,
-              end_date: endDate,
-            });
-
-            try {
-              await updateCampaignMutation.mutateAsync({
-                campaignId,
-                ...corePayload,
-              });
-
-              const currentGa = (campaign.gaMeasurementId || '').trim();
-              if (rawGaMeasurementId && rawGaMeasurementId !== currentGa) {
-                const gaPayload = sanitizeCampaignPatch({
-                  ga_type: 'MANUAL',
-                  ga_property_id: null,
-                  ga_measurement_id: rawGaMeasurementId,
-                });
-
-                await updateCampaignGAMutation.mutateAsync({
-                  campaignId,
-                  ...gaPayload,
-                });
-              }
-            } catch {
-              // Error states are handled by mutation onError callbacks.
-            }
-           }}
-         >
-           <h2 className="text-lg font-semibold text-foreground">Edit Campaign</h2>
-
-          <label className="block text-sm text-foreground">
-            Name
-            <input
-              name="name"
-              defaultValue={formDefaults.name}
-              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-              required
-            />
-          </label>
-
-          <label className="block text-sm text-foreground">
-            Status
-            <select
-              name="status"
-              defaultValue={formDefaults.status}
-              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-            >
-              <option value="active">active</option>
-              <option value="paused">paused</option>
-              <option value="draft">draft</option>
-              <option value="archived">archived</option>
-            </select>
-          </label>
-
-          <label className="block text-sm text-foreground">
-            Description
-            <textarea
-              name="description"
-              defaultValue={formDefaults.description}
-              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-              rows={3}
-            />
-          </label>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm text-foreground">
-              Start date
-              <input
-                type="date"
-                name="start_date"
-                defaultValue={formDefaults.startDate}
-                className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-              />
-            </label>
-            <label className="block text-sm text-foreground">
-              End date
-              <input
-                type="date"
-                name="end_date"
-                defaultValue={formDefaults.endDate}
-                className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-              />
-            </label>
-          </div>
-
-          <label className="block text-sm text-foreground">
-            GA4 default code
-            <input
-              name="ga_measurement_id"
-              defaultValue={campaign.gaMeasurementId || ''}
-              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground"
-              placeholder="G-XXXXXXX"
-            />
-          </label>
-
-          <p className="text-xs text-muted-foreground">
-            Campaign content is edited here. GA4 settings are managed in the section above.
-          </p>
-
-            <div className="flex gap-3">
-            <Button type="submit" disabled={updateCampaignMutation.isPending}>
-              {updateCampaignMutation.isPending ? 'Saving...' : 'Save Changes'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setIsEditing(false);
-                setErrorMessage(null);
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
-
       {errorMessage && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {errorMessage}
         </div>
       )}
-
-      <div className="hidden" />
     </section>
   );
 }

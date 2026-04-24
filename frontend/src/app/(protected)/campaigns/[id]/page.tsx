@@ -15,6 +15,6 @@ interface CampaignDetailPageProps {
 export const dynamic = 'force-dynamic';
 
 export default function CampaignDetailPage({ params }: CampaignDetailPageProps) {
-  redirect(`/campaign-detail/${params.id}`);
+  redirect(`/dashboard?tab=campaign-detail&campaignId=${params.id}`);
 }
 

@@ -45,6 +45,21 @@ export interface APIError {
   details?: Record<string, any>;
 }
 
+export interface DashboardOverviewRequest {
+  startDate?: string;
+  endDate?: string;
+  comparePrevious?: boolean;
+  topCampaignsLimit?: number;
+  includeInactive?: boolean;
+}
+
+export interface DashboardOverviewResponse {
+  kpis?: Record<string, unknown>;
+  charts?: Record<string, unknown>;
+  campaigns?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 function toNumericUserId(value: unknown): number | undefined {
@@ -680,6 +695,36 @@ export const apiClient = {
         },
       });
       return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
+   * Dashboard - Overview
+   * GET /api/v1/dashboard/overview
+   */
+  async getDashboardOverview(
+    req: DashboardOverviewRequest = {}
+  ): Promise<DashboardOverviewResponse> {
+    try {
+      const response = await getAPIClient().get('/dashboard/overview', {
+        params: {
+          ...(req.startDate ? { start_date: req.startDate } : {}),
+          ...(req.endDate ? { end_date: req.endDate } : {}),
+          ...(typeof req.comparePrevious === 'boolean'
+            ? { compare_previous: req.comparePrevious }
+            : {}),
+          ...(typeof req.topCampaignsLimit === 'number'
+            ? { top_campaigns_limit: req.topCampaignsLimit }
+            : {}),
+          ...(typeof req.includeInactive === 'boolean'
+            ? { include_inactive: req.includeInactive }
+            : {}),
+        },
+      });
+
+      return (response.data ?? {}) as DashboardOverviewResponse;
     } catch (error) {
       throw error;
     }

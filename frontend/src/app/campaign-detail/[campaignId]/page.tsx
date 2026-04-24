@@ -1,4 +1,4 @@
-import CampaignDetail from '@/modules/campaigns/detail/campaign-detail';
+import { redirect } from 'next/navigation';
 
 interface CampaignDetailRouteProps {
   params: {
@@ -9,6 +9,6 @@ interface CampaignDetailRouteProps {
 export const dynamic = 'force-dynamic';
 
 export default function CampaignDetailRoute({ params }: CampaignDetailRouteProps) {
-  return <CampaignDetail campaignId={params.campaignId} />;
+  redirect(`/dashboard?tab=campaign-detail&campaignId=${params.campaignId}`);
 }
 

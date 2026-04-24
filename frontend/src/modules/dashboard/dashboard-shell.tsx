@@ -9,12 +9,16 @@ import {
   LayoutDashboard,
   LogOut,
   Megaphone,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   QrCode,
   Settings,
+  Sun,
   User,
 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { useTheme } from 'next-themes';
 import IntegrationsDashboard from '../integrations/calendar/integrations-dashboard';
 import { type AuthContext, getAuthContext } from '../../lib/api/auth-fetch';
 import { Button } from '../../components/ui/button';
@@ -27,21 +31,35 @@ import {
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
 import { Separator } from '../../components/ui/separator';
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '../../components/ui/breadcrumb';
+import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '../../components/ui/breadcrumb';
 import { Card, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import DashboardOverviewView from './views/dashboard-overview-view';
 import CampaignsView from './views/campaigns-view';
-import ReportsView from './views/reports-view';
+import AnalyticsView from './views/analytics-view';
+import CampaignDetail from '@/modules/campaigns/detail/campaign-detail';
 
-type DashboardTab = 'dashboard' | 'campaigns' | 'integrations' | 'reports' | 'profile';
+type DashboardTab = 'dashboard' | 'analytics' | 'campaigns' | 'integrations' | 'reports' | 'profile' | 'campaign-detail';
 
-export default function DashboardShell({ initialTab = 'campaigns' }: { initialTab?: DashboardTab }) {
+export default function DashboardShell({
+  initialTab = 'dashboard',
+  initialCampaignId,
+}: {
+  initialTab?: DashboardTab;
+  initialCampaignId?: string;
+}) {
+  const searchParams = useSearchParams();
+  const { resolvedTheme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab);
   const [collapsed, setCollapsed] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [authContext, setAuthContextState] = useState<AuthContext>({});
 
   useEffect(() => {
     setAuthContextState(getAuthContext());
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
   }, []);
 
   const user = useMemo(() => ({
@@ -51,6 +69,59 @@ export default function DashboardShell({ initialTab = 'campaigns' }: { initialTa
   }), [authContext.companyName, authContext.role]);
 
   const avatarFallback = useMemo(() => user.name.slice(0, 2).toUpperCase(), [user.name]);
+
+  // Keep tab state in sync with route/query changes (e.g. /dashboard?tab=campaign-detail).
+  useEffect(() => setActiveTab(initialTab), [initialTab])
+
+  const campaignNameFromQuery = searchParams.get('campaignName');
+  const campaignIdFromQuery = searchParams.get('campaignId');
+  const resolvedCampaignId = useMemo(() => {
+    const idFromQuery = campaignIdFromQuery?.trim();
+    if (idFromQuery) {
+      return idFromQuery;
+    }
+
+    const idFromInitial = initialCampaignId?.trim();
+    return idFromInitial || undefined;
+  }, [campaignIdFromQuery, initialCampaignId]);
+
+  const sidebarLabel = useMemo(() => {
+    if (activeTab === 'campaign-detail') {
+      return 'Campaigns';
+    }
+    if (activeTab === 'analytics') {
+      return 'Analytics';
+    }
+    if (activeTab === 'integrations') {
+      return 'Google Services';
+    }
+    if (activeTab === 'reports') {
+      return 'Reports';
+    }
+    if (activeTab === 'profile') {
+      return 'Profile';
+    }
+    if (activeTab === 'dashboard') {
+      return 'Dashboard';
+    }
+    return 'Campaigns';
+  }, [activeTab]);
+
+  const functionLabel = useMemo(() => {
+    if (activeTab !== 'campaign-detail') {
+      return null;
+    }
+
+    if (campaignNameFromQuery && campaignNameFromQuery.trim().length > 0) {
+      return campaignNameFromQuery;
+    }
+
+    if (campaignIdFromQuery && campaignIdFromQuery.trim().length > 0) {
+      return `Campaign ${campaignIdFromQuery}`;
+    }
+
+    return 'Campaign Detail';
+  }, [activeTab, campaignIdFromQuery, campaignNameFromQuery]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -86,6 +157,7 @@ export default function DashboardShell({ initialTab = 'campaigns' }: { initialTa
           <nav className={clsx('transition-all duration-300', collapsed ? 'flex flex-col items-center gap-4' : 'space-y-1')}>
             {[
               { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+              { key: 'analytics', label: 'Analytics', icon: BarChart3 },
               { key: 'campaigns', label: 'Campaigns', icon: Megaphone },
               { key: 'integrations', label: 'Google Services', icon: Calendar },
               { key: 'reports', label: 'Reports', icon: BarChart3 },
@@ -186,25 +258,42 @@ export default function DashboardShell({ initialTab = 'campaigns' }: { initialTa
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/home">Home</BreadcrumbLink>
+                  <BreadcrumbPage>{sidebarLabel}</BreadcrumbPage>
                 </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage className="capitalize">{activeTab}</BreadcrumbPage>
-                </BreadcrumbItem>
+                {functionLabel && (
+                  <>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage>{functionLabel}</BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                )}
               </BreadcrumbList>
             </Breadcrumb>
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Bạn có thể thêm Notification hoặc Search ở đây */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 hover:bg-accent"
+              aria-label={mounted && resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+            >
+              {mounted && resolvedTheme === 'dark' ? (
+                <Sun className="size-4" />
+              ) : (
+                <Moon className="size-4" />
+              )}
+            </Button>
           </div>
         </header>
 
         {/* SCROLLABLE VIEWPORT */}
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-6">
           <div className="mx-auto max-w-6xl space-y-6">
-            {activeTab !== 'campaigns' && (
+            {(activeTab === 'integrations' || activeTab === 'profile') && (
               <header>
                 <h2 className="text-3xl font-bold tracking-tight capitalize">{activeTab}</h2>
                 <p className="text-muted-foreground">Manage your dynamic QR strategy and monitor performance.</p>
@@ -214,9 +303,19 @@ export default function DashboardShell({ initialTab = 'campaigns' }: { initialTa
             {/* TAB VIEWS */}
             <div className="min-h-[400px]">
               {activeTab === 'dashboard' && <DashboardOverviewView />}
+              {activeTab === 'analytics' && <AnalyticsView />}
               {activeTab === 'campaigns' && <CampaignsView />}
+              {activeTab === 'campaign-detail' && resolvedCampaignId && <CampaignDetail campaignId={resolvedCampaignId} />}
+              {activeTab === 'campaign-detail' && !resolvedCampaignId && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Campaign not selected</CardTitle>
+                    <CardDescription>Open a campaign from the campaigns list to view details.</CardDescription>
+                  </CardHeader>
+                </Card>
+              )}
               {activeTab === 'integrations' && <IntegrationsDashboard />}
-              {activeTab === 'reports' && <ReportsView />}
+              {activeTab === 'reports' && null}
               {activeTab === 'profile' && (
                 <Card>
                   <CardHeader>
