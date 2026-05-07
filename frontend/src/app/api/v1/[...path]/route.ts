@@ -29,7 +29,7 @@ function getBackendApiBase(): string {
 
   return process.env.NODE_ENV === 'development'
     ? 'http://localhost:8000/api/v1'
-    : '';
+    : 'https://dynamicqr-backend.onrender.com/api/v1';
 }
 
 function buildProxyHeaders(request: NextRequest): Headers {
