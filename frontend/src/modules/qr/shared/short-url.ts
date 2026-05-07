@@ -7,7 +7,11 @@ export function buildShortRedirectUrl(shortCode: string): string {
   const explicitBase = process.env.NEXT_PUBLIC_SHORT_REDIRECT_BASE_URL;
 
   if (explicitBase && normalizedCode) {
-    return `${explicitBase.replace(/\/+$/, '')}/${normalizedCode}`;
+    const normalizedBase = explicitBase
+      .replace(/\/+$/, '')
+      .replace(/\/q$/i, '');
+
+    return `${normalizedBase}/q/${normalizedCode}`;
   }
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL;
@@ -22,4 +26,3 @@ export function buildShortRedirectUrl(shortCode: string): string {
 
   return normalizedCode ? `/q/${normalizedCode}` : '/q';
 }
-
