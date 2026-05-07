@@ -13,7 +13,6 @@ import {
   Pencil,
   Trash2,
   Eye,
-  Download,
   Copy,
   Check,
   QrCode,
@@ -69,6 +68,7 @@ import {
 import { DateRangePicker } from "@/components/dashboard/date-range-picker"
 import { TablePagination } from "@/components/ui/table-pagination"
 import { useLanguage } from "@/contexts/language-context"
+import QRCodePreview from '@/modules/qr/shared/qr-code-preview'
 
 // Mapping type từ API thực tế
 import type { QRCode } from '@/apis/generated/types'
@@ -397,9 +397,18 @@ export default function QRCodesListPage() {
               <DialogDescription>{t("qrcodesPage.scanQr")}</DialogDescription>
             </DialogHeader>
             <div className="flex flex-col items-center gap-4 py-4">
-              <div className="flex size-64 items-center justify-center rounded-lg border-2 border-dashed bg-muted">
-                <QrCode className="size-32 text-muted-foreground" />
-              </div>
+              {selectedQr?.shortCode ? (
+                <QRCodePreview
+                  shortCode={selectedQr.shortCode}
+                  fileLabel={selectedQr.name || selectedQr.shortCode}
+                  size={256}
+                  className="w-full"
+                />
+              ) : (
+                <div className="flex size-64 items-center justify-center rounded-lg border-2 border-dashed bg-muted">
+                  <QrCode className="size-32 text-muted-foreground" />
+                </div>
+              )}
               <div className="w-full space-y-2 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">{t("qrcodes.destination")}:</span>
@@ -418,7 +427,6 @@ export default function QRCodesListPage() {
                   </a>
                 </Button>
               )}
-              <Button><Download className="mr-2 size-4" /> {t("qrcodes.download")}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

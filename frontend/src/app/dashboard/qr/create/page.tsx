@@ -5,6 +5,7 @@
  * Form to create a new QR code
  */
 
+import { Suspense } from 'react';
 import CreateQRCodePage from '@/modules/qr/create/qr-create';
 
 export const dynamic = 'force-dynamic';
@@ -15,5 +16,9 @@ export const metadata = {
 };
 
 export default function CreateQRPage() {
-  return <CreateQRCodePage />;
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading...</div>}>
+      <CreateQRCodePage />
+    </Suspense>
+  );
 }

@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useState, useMemo } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -11,7 +11,7 @@ import { z } from 'zod'
 
 // --- LOGIC API & STATE TỪ PROJECT CỦA BẠN ---
 import { createQR } from '@/apis/qr-api'
-import { getCampaigns } from '@/apis/campaigns-api'
+import { getCampaignById, getCampaigns } from '@/apis/campaigns-api'
 import { getGA4Properties } from '@/apis/ga4-api'
 import { queryKeys, staleTimes } from '@/lib/cache/query-client'
 import { useIntegrationContext } from '@/state/integration-context'
@@ -79,8 +79,12 @@ type CreateQRFormData = z.infer<ReturnType<typeof createQRSchema>>;
 
 export default function CreateQRCodePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { t } = useLanguage()
   const { isGoogleConnected, hasAnalyticsScope } = useIntegrationContext()
+  const initialCampaignId = searchParams.get('campaignId') || ''
+  const returnTo = searchParams.get('returnTo') || ''
+  const hasAppliedInitialCampaignRef = React.useRef(false)
 
   // --- STATE QUẢN LÝ RIÊNG (UI/UX) ---
   const [ga4Mode, setGa4Mode] = useState<GA4Mode>('NO')
@@ -120,6 +124,13 @@ export default function CreateQRCodePage() {
     staleTime: staleTimes.campaigns,
   })
 
+  const campaignDetailQuery = useQuery({
+    queryKey: queryKeys.campaigns.detail(initialCampaignId),
+    queryFn: () => getCampaignById({ campaignId: initialCampaignId }),
+    enabled: Boolean(initialCampaignId),
+    staleTime: staleTimes.campaigns,
+  })
+
   const ga4PropertiesQuery = useQuery({
     queryKey: [...queryKeys.integrations.all, 'ga4-properties'],
     queryFn: () => getGA4Properties(),
@@ -128,7 +139,23 @@ export default function CreateQRCodePage() {
 
   const campaigns = campaignsResponse?.campaigns || []
   const selectedCampaignId = watch('campaignId')
-  const selectedCampaign = campaigns.find(c => String(c.id) === selectedCampaignId)
+  const selectedCampaign =
+    campaigns.find(c => String(c.id) === selectedCampaignId) ||
+    (String(campaignDetailQuery.data?.id ?? '') === selectedCampaignId ? campaignDetailQuery.data : undefined)
+
+  React.useEffect(() => {
+    if (!initialCampaignId || hasAppliedInitialCampaignRef.current) {
+      return
+    }
+
+    const existsInList = campaigns.some((campaign) => String(campaign.id) === initialCampaignId)
+    const existsInDetail = String(campaignDetailQuery.data?.id ?? '') === initialCampaignId
+
+    if (!campaignsLoading && (existsInList || existsInDetail)) {
+      setValue('campaignId', initialCampaignId, { shouldDirty: true, shouldValidate: true })
+      hasAppliedInitialCampaignRef.current = true
+    }
+  }, [campaignDetailQuery.data?.id, campaigns, campaignsLoading, initialCampaignId, setValue])
 
   // --- GA4 DETECTION LOGIC ---
   const detectGA4Mutation = useMutation({
@@ -158,7 +185,9 @@ export default function CreateQRCodePage() {
     mutationFn: (payload: any) => createQR(payload),
     onSuccess: () => {
       toast.success(t("qrcodesPage.createSuccess"))
-      router.push("/dashboard/qr")
+      const createdCampaignId = getValues('campaignId')
+      const fallbackPath = createdCampaignId ? `/dashboard/campaigns/${createdCampaignId}` : '/dashboard/qr'
+      router.push(returnTo.startsWith('/dashboard/') ? returnTo : fallbackPath)
     },
     onError: () => toast.error(t("qrcodesPage.createError"))
   })
@@ -259,6 +288,15 @@ export default function CreateQRCodePage() {
                         <SelectValue placeholder={t("qrcodesPage.selectCampaignPlaceholder")} />
                       </SelectTrigger>
                       <SelectContent>
+                        {campaignDetailQuery.data &&
+                          !campaigns.some((campaign) => String(campaign.id) === String(campaignDetailQuery.data?.id)) && (
+                            <SelectItem value={String(campaignDetailQuery.data.id)}>
+                              <div className="flex items-center gap-2">
+                                <span>{campaignDetailQuery.data.name}</span>
+                                <Badge variant="outline" className="text-[10px] uppercase">{campaignDetailQuery.data.status}</Badge>
+                              </div>
+                            </SelectItem>
+                          )}
                         {campaigns.filter((c) => c.id && String(c.id).trim() !== '').map((c) => (
                           <SelectItem key={c.id} value={String(c.id)}>
                             <div className="flex items-center gap-2">
