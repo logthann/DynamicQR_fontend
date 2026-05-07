@@ -58,6 +58,7 @@ const PUBLIC_ROUTES = [
   '/login',
   '/register',
   '/forgot-password',
+  '/integrations/google/callback',
   '/api/v1/auth/login',
   '/api/v1/auth/register',
 ];
