@@ -22,7 +22,10 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react';
-import { apiClient } from '@/lib/api/client';
+import { getCampaignById, updateCampaign, deleteCampaign } from '@/apis/campaigns-api';
+import { getAuthContext } from '@/apis/auth-fetch';
+import { getGA4Properties } from '@/apis/ga4-api';
+import { syncCampaign, unlinkCampaign } from '@/apis/calendar-api';
 import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
 import CampaignQRManager from '@/modules/campaigns/detail/campaign-qr-manager';
 import {
@@ -42,16 +45,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -62,10 +55,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {Campaign} from "@/apis/generated/types";
 
 interface CampaignDetailProps {
   campaignId: string;
 }
+
+type CampaignWithCreator = Campaign & {
+  userId?: string;
+  creator?: {
+    username?: string;
+    email?: string;
+  };
+};
 
 type CampaignPatchBody = {
   name?: string;
@@ -128,31 +130,33 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     hasCalendarScope,
     hasAnalyticsScope,
     refetchIntegrations,
+    invalidateToken,
   } = useIntegrationContext();
   const [ga4Mode, setGa4Mode] = useState<GA4Mode>('MANUAL');
   const [selectedGA4MeasurementId, setSelectedGA4MeasurementId] = useState<string>('');
   const [manualCampaignGA, setManualCampaignGA] = useState<string>('');
-  const [editCampaignOpen, setEditCampaignOpen] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editDescription, setEditDescription] = useState('');
-  const [editStartDate, setEditStartDate] = useState('');
-  const [editEndDate, setEditEndDate] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [calendarActionMessage, setCalendarActionMessage] = useState<string | null>(null);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const authContext = getAuthContext();
+    setIsAdmin(authContext.role === 'admin');
+  }, []);
+
   const campaignQuery = useQuery({
     queryKey: queryKeys.campaigns.detail(campaignId),
-    queryFn: () => apiClient.getCampaignById({ campaignId }),
+    queryFn: () => getCampaignById({ campaignId }) as Promise<CampaignWithCreator>,
     staleTime: staleTimes.campaigns,
     retry: false,
   });
 
 
   const updateCampaignMutation = useMutation({
-    mutationFn: apiClient.updateCampaign,
+    mutationFn: updateCampaign,
     onSuccess: (updated) => {
       cacheInvalidations.updateCampaign(String(updated.id));
-      setEditCampaignOpen(false);
       setErrorMessage(null);
     },
     onError: (err: any) => {
@@ -161,7 +165,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   });
 
   const deleteCampaignMutation = useMutation({
-    mutationFn: apiClient.deleteCampaign,
+    mutationFn: deleteCampaign,
     onSuccess: () => {
       cacheInvalidations.deleteCampaign();
       setErrorMessage(null);
@@ -173,7 +177,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   });
 
   const updateCampaignGAMutation = useMutation({
-    mutationFn: apiClient.updateCampaign,
+    mutationFn: updateCampaign,
     onSuccess: (updated) => {
       cacheInvalidations.updateCampaign(String(updated.id));
       setErrorMessage(null);
@@ -184,7 +188,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   });
 
   const syncCampaignMutation = useMutation({
-    mutationFn: apiClient.syncCampaign,
+    mutationFn: syncCampaign,
     onSuccess: () => {
       cacheInvalidations.syncCampaignToCalendar(campaignId);
       void campaignQuery.refetch();
@@ -198,13 +202,13 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   });
 
   const unlinkCampaignMutation = useMutation({
-    mutationFn: apiClient.unlinkCampaign,
+    mutationFn: unlinkCampaign,
     onSuccess: async () => {
       cacheInvalidations.unlinkCampaignFromCalendar(campaignId);
       // Keep campaign + integration views synchronized after unlink.
       if (campaign?.status) {
         try {
-          await apiClient.updateCampaign({ campaignId, status: campaign.status });
+          await updateCampaign({ campaignId, status: campaign.status });
           cacheInvalidations.updateCampaign(campaignId);
         } catch {
           // Unlink is already successful; do not fail UI if status patch is rejected.
@@ -221,6 +225,7 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
   });
 
   const campaign = campaignQuery.data;
+  const campaignWithCreator = campaign as CampaignWithCreator | undefined;
 
   useEffect(() => {
     if (!campaign) {
@@ -232,16 +237,13 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     setGa4Mode(nextMode);
     setSelectedGA4MeasurementId(campaign.gaMeasurementId || '');
     setManualCampaignGA(campaign.gaMeasurementId || '');
-    setEditName(campaign.name || '');
-    setEditDescription(campaign.description || '');
-    setEditStartDate(campaign.startDate || '');
-    setEditEndDate(campaign.endDate || '');
   }, [campaign?.id, campaign?.gaType, campaign?.gaMode, campaign?.gaPropertyId, campaign?.gaMeasurementId]);
 
   const ga4PropertiesQuery = useQuery({
     queryKey: [...queryKeys.integrations.all, 'ga4-properties'],
-    queryFn: () => apiClient.getGA4Properties(),
+    queryFn: () => getGA4Properties(),
     staleTime: staleTimes.calendarEvents,
+    retry: false,
     enabled:
       ga4Mode === 'OAUTH' &&
       shouldEnableGA4PropertiesQuery({
@@ -249,6 +251,13 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
         hasAnalyticsScope,
       }),
   });
+
+  // Invalidate token when GA4 properties fail (indicates expired/invalid token)
+  useEffect(() => {
+    if (ga4PropertiesQuery.isError) {
+      invalidateToken();
+    }
+  }, [ga4PropertiesQuery.isError, invalidateToken]);
 
   useEffect(() => {
     if (selectedGA4MeasurementId) {
@@ -294,10 +303,10 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
       <div className="space-y-4 rounded-lg border border-destructive/40 bg-destructive/10 p-6">
         <p className="text-sm text-destructive">{message}</p>
         <Link
-          href="/dashboard"
+          href="/dashboard/campaigns"
           className="inline-flex items-center rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground"
         >
-          Back to Dashboard
+          Back to Campaign List
         </Link>
       </div>
     );
@@ -310,48 +319,15 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     Boolean(campaign?.googleEventId);
   const isCalendarActionPending = syncCampaignMutation.isPending || unlinkCampaignMutation.isPending;
 
-  const handleSaveCampaignEdit = async () => {
-    const name = editName.trim();
-    const description = editDescription.trim();
-    const startDate = editStartDate;
-    const endDate = editEndDate;
-
-    if (!name) {
-      setErrorMessage('Campaign name is required.');
-      return;
-    }
-
-    if (startDate && endDate && endDate < startDate) {
-      setErrorMessage('End date must be on or after start date.');
-      return;
-    }
-
-    try {
-      await updateCampaignMutation.mutateAsync({
-        campaignId,
-        ...sanitizeCampaignPatch({
-          name,
-          description,
-          start_date: startDate,
-          end_date: endDate,
-        }),
-      });
-      setEditCampaignOpen(false);
-      setErrorMessage(null);
-    } catch {
-      // Error UI is handled by mutation callbacks.
-    }
-  };
-
   if (!campaign) {
     return (
       <div className="space-y-4 rounded-lg border border-muted bg-card p-6">
         <p className="text-sm text-muted-foreground">Campaign not found.</p>
         <Link
-          href="/dashboard"
+          href="/dashboard/campaigns"
           className="inline-flex items-center rounded-md border border-muted bg-background px-4 py-2 text-sm text-foreground"
         >
-          Back to Dashboard
+          Back to Campaign List
         </Link>
       </div>
     );
@@ -365,6 +341,13 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{campaign.name}</h1>
               <span className="text-sm text-muted-foreground">(ID: {campaign.id})</span>
+              {isAdmin && campaignWithCreator?.creator && (
+                <div className="ml-4 flex items-center gap-2 text-sm text-muted-foreground border-l pl-4">
+                  <span>Created by:</span>
+                  <span className="font-medium text-foreground">{campaignWithCreator.creator.username}</span>
+                  <span className="text-xs">({campaignWithCreator.creator.email})</span>
+                </div>
+              )}
               <Badge
                 variant="outline"
                 className={
@@ -387,20 +370,17 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem
-              onSelect={() => {
-                setEditCampaignOpen(true);
-                setErrorMessage(null);
-              }}
-            >
-              <Pencil className="mr-2 size-4" />
-              Edit Campaign
+            <DropdownMenuItem asChild>
+              <Link href={`/dashboard/campaigns/${campaign.id}/edit`}>
+                <Pencil className="mr-2 size-4" />
+                Edit Campaign
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/dashboard?tab=campaigns">
+              <Link href="/dashboard/campaigns">
                 <ArrowLeft className="mr-2 size-4" />
-                Back to Dashboard
+                Back to Campaign List
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -436,65 +416,6 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-
-      <Dialog open={editCampaignOpen} onOpenChange={setEditCampaignOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Campaign</DialogTitle>
-            <DialogDescription>
-              Update campaign details. Click save when you&apos;re done.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Campaign Name</Label>
-              <Input
-                id="edit-name"
-                value={editName}
-                onChange={(event) => setEditName(event.target.value)}
-                placeholder="Enter campaign name"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-description">Description</Label>
-              <Input
-                id="edit-description"
-                value={editDescription}
-                onChange={(event) => setEditDescription(event.target.value)}
-                placeholder="Enter campaign description"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-start-date">Start Date</Label>
-                <Input
-                  id="edit-start-date"
-                  type="date"
-                  value={editStartDate}
-                  onChange={(event) => setEditStartDate(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-end-date">End Date</Label>
-                <Input
-                  id="edit-end-date"
-                  type="date"
-                  value={editEndDate}
-                  onChange={(event) => setEditEndDate(event.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditCampaignOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveCampaignEdit} disabled={updateCampaignMutation.isPending}>
-              {updateCampaignMutation.isPending ? 'Saving...' : 'Save Changes'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.86fr)_minmax(0,1fr)]">
         <Card>
@@ -688,7 +609,13 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
                   <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
                     <AlertTriangle className="size-4 text-destructive" />
                     <span className="text-xs text-destructive">
-                      Unable to load GA4 properties. Check OAuth Analytics scope and backend `/ga4/properties`.
+                      Unable to load GA4 properties.{' '}
+                      <Link
+                        href="/dashboard/integrations/setup"
+                        className="underline hover:text-destructive/80"
+                      >
+                        Reconnect Google
+                      </Link>
                     </span>
                   </div>
                 )}
@@ -795,4 +722,3 @@ export default function CampaignDetail({ campaignId }: CampaignDetailProps) {
     </section>
   );
 }
-

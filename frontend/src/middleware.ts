@@ -48,6 +48,7 @@ const PROTECTED_ROUTES = [
   '/analytics',
   '/integrations',
   '/dashboard',
+  '/settings',
 ];
 
 /**

@@ -1,14 +1,15 @@
 'use client';
 
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useMemo, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '@/lib/api/client';
-import { getAuthToken } from '@/lib/api/auth-fetch';
+import { getIntegrations } from '@/apis/integrations-api';
+import { getAuthToken } from '@/apis/auth-fetch';
 import { queryKeys, staleTimes } from '@/lib/cache/query-client';
 
 type IntegrationContextValue = {
   isLoading: boolean;
   isGoogleConnected: boolean;
+  isTokenValid: boolean;
   connectedProviderLabel: string;
   connectedAccountEmail: string | null;
   grantedScopes: string[];
@@ -16,17 +17,24 @@ type IntegrationContextValue = {
   hasAnalyticsScope: boolean;
   isDualScopeReady: boolean;
   refetchIntegrations: () => Promise<unknown>;
+  invalidateToken: () => void;
 };
 
 const IntegrationContext = createContext<IntegrationContextValue | null>(null);
 
 export function IntegrationProvider({ children }: { children: React.ReactNode }) {
+  const [isTokenValid, setIsTokenValid] = useState(true);
+
   const integrationsQuery = useQuery({
     queryKey: queryKeys.integrations.all,
-    queryFn: () => apiClient.getIntegrations(),
+    queryFn: () => getIntegrations(),
     staleTime: staleTimes.calendarEvents,
     enabled: Boolean(getAuthToken()),
   });
+
+  const invalidateToken = useCallback(() => {
+    setIsTokenValid(false);
+  }, []);
 
   const value = useMemo<IntegrationContextValue>(() => {
     const providers = integrationsQuery.data?.integrations ?? [];
@@ -60,22 +68,32 @@ export function IntegrationProvider({ children }: { children: React.ReactNode })
     const rawAccountEmail = (googleProvider as { accountEmail?: unknown } | undefined)?.accountEmail;
     const connectedAccountEmail = typeof rawAccountEmail === 'string' ? rawAccountEmail : null;
 
+    // Token is considered invalid if API calls fail, even if DB says connected
+    const effectiveIsGoogleConnected = isGoogleConnected && isTokenValid;
+
     return {
       isLoading: integrationsQuery.isLoading,
-      isGoogleConnected,
-      connectedProviderLabel: isGoogleConnected
+      isGoogleConnected: effectiveIsGoogleConnected,
+      isTokenValid,
+      connectedProviderLabel: effectiveIsGoogleConnected
         ? connectedAccountEmail
           ? `Google connected (${connectedAccountEmail})`
           : 'Google connected'
-        : 'Google not connected',
+        : isGoogleConnected && !isTokenValid
+          ? 'Google token expired - please reconnect'
+          : 'Google not connected',
       connectedAccountEmail,
       grantedScopes,
       hasCalendarScope,
       hasAnalyticsScope,
-      isDualScopeReady: isGoogleConnected && hasCalendarScope && hasAnalyticsScope,
-      refetchIntegrations: async () => integrationsQuery.refetch(),
+      isDualScopeReady: effectiveIsGoogleConnected && hasCalendarScope && hasAnalyticsScope,
+      refetchIntegrations: async () => {
+        setIsTokenValid(true); // Reset token validity on refetch
+        return integrationsQuery.refetch();
+      },
+      invalidateToken,
     };
-  }, [integrationsQuery]);
+  }, [integrationsQuery, isTokenValid, invalidateToken]);
 
   return <IntegrationContext.Provider value={value}>{children}</IntegrationContext.Provider>;
 }

@@ -19,10 +19,14 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { apiClient } from '@/lib/api/client';
-import { setAuthContext, setAuthToken } from '@/lib/api/auth-fetch';
-import { queryClient } from '@/lib/cache/query-client';
-import type { LoginRequest } from '@/lib/api/generated/types';
+import { login } from '@/apis/auth-api';
+import { sessionSyncIntegrations } from '@/apis/integrations-api';
+import { setAuthContext, setAuthToken } from '@/apis/auth-fetch';
+import { cacheInvalidations, queryClient } from '@/lib/cache/query-client';
+import type { LoginRequest } from '@/apis/generated/types';
+
+const SESSION_SYNC_DONE_KEY = 'dqr:integrations-session-sync-done';
+const SESSION_SYNC_REAUTH_KEY = 'dqr:integrations-session-sync-reauth';
 
 /**
  * Validation schema for login form
@@ -64,7 +68,7 @@ export default function LoginForm() {
         password: data.password,
       };
 
-      const response = await apiClient.login(loginRequest);
+      const response = await login(loginRequest);
 
       // Support common token field variants from different backend serializers.
       const token =
@@ -81,22 +85,56 @@ export default function LoginForm() {
         (response as any)?.role ??
         responseUser?.role ??
         (response as any)?.user_role;
-      const responseCompany =
-        (response as any)?.company_name ??
-        (response as any)?.companyName ??
-        responseUser?.company_name ??
-        responseUser?.companyName;
+      const responseDisplayName =
+        responseUser?.full_name ??
+        responseUser?.fullName ??
+        responseUser?.username ??
+        responseUser?.name;
+      const responseEmail = responseUser?.email ?? (response as any)?.email;
+      const responseUsername = responseUser?.username ?? (response as any)?.username;
+      const responseFullName = responseUser?.full_name ?? responseUser?.fullName ?? responseDisplayName;
       const responseUserIdRaw = responseUser?.id ?? (response as any)?.user_id;
       const parsedUserId = Number(responseUserIdRaw);
 
       setAuthContext({
         ...(Number.isFinite(parsedUserId) ? { userId: parsedUserId } : {}),
         ...(typeof responseRole === 'string' ? { role: responseRole } : {}),
-        ...(typeof responseCompany === 'string' ? { companyName: responseCompany } : {}),
+        ...(typeof responseDisplayName === 'string' ? { displayName: responseDisplayName } : {}),
+        ...(typeof responseFullName === 'string' ? { fullName: responseFullName } : {}),
+        ...(typeof responseUsername === 'string' ? { username: responseUsername } : {}),
+        ...(typeof responseEmail === 'string' ? { email: responseEmail } : {}),
+        ...(typeof responseDisplayName === 'string' ? { companyName: responseDisplayName } : {}),
       });
 
       // Prevent stale data from previous account/session causing RBAC mismatches.
       queryClient.clear();
+
+      // Sync integration statuses during login startup (not waiting for dashboard entry).
+      try {
+        const syncResult = await sessionSyncIntegrations();
+        cacheInvalidations.refreshIntegrationProvider();
+
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.setItem(SESSION_SYNC_DONE_KEY, '1');
+          const providerNeedingReauth = syncResult.providers.find((provider) => provider.requiresReauth);
+
+          if (providerNeedingReauth) {
+            window.sessionStorage.setItem(
+              SESSION_SYNC_REAUTH_KEY,
+              JSON.stringify({
+                provider: providerNeedingReauth.provider,
+                message: providerNeedingReauth.message ?? 'Google connection requires re-authentication.',
+              })
+            );
+          } else {
+            window.sessionStorage.removeItem(SESSION_SYNC_REAUTH_KEY);
+          }
+        }
+      } catch {
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.removeItem(SESSION_SYNC_DONE_KEY);
+        }
+      }
 
       // If backend auth succeeded, continue to protected navigation.
       router.replace(redirectPath);

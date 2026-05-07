@@ -205,7 +205,10 @@ export default function HomePage() {
               </Link>
             </nav>
 
-            <p className="text-sm text-muted-foreground">&copy; {new Date().getFullYear()} DynamicQR. All rights reserved.</p>
+            {/* Static copyright for public home page */}
+            <p className="text-sm text-muted-foreground">
+              &copy; {new Date().getFullYear()} DynamicQR. All rights reserved.
+            </p>
           </div>
         </div>
       </footer>

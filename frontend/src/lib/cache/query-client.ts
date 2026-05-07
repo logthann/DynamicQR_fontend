@@ -100,6 +100,21 @@ export const queryKeys = {
       [...APP_QUERY_KEY, 'analytics', 'summary', { qrId, startDate, endDate }] as const,
   },
 
+  // Dashboard
+  dashboard: {
+    all: [...APP_QUERY_KEY, 'dashboard'] as const,
+    overview: () => [...APP_QUERY_KEY, 'dashboard', 'overview'] as const,
+  },
+
+  // Users
+  users: {
+    all: [...APP_QUERY_KEY, 'users'] as const,
+    lists: () => [...APP_QUERY_KEY, 'users', 'list'] as const,
+    list: (filters?: any) => [...APP_QUERY_KEY, 'users', 'list', { filters }] as const,
+    details: () => [...APP_QUERY_KEY, 'users', 'detail'] as const,
+    detail: (id: string) => [...APP_QUERY_KEY, 'users', 'detail', id] as const,
+  },
+
   // Integrations
   integrations: {
     all: [...APP_QUERY_KEY, 'integrations'] as const,
@@ -175,6 +190,18 @@ export const cacheInvalidations = {
   disconnectIntegrationProvider: () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.integrations.status() });
   },
+
+  // User mutations invalidate user list
+  users: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.lists() });
+  },
+  updateUser: (userId: string) => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.detail(userId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.lists() });
+  },
+  deleteUser: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.lists() });
+  },
 };
 
 /**
@@ -184,9 +211,11 @@ export const staleTimes = {
   // Fast-changing data: interactive user selections
   campaigns: 1000 * 30, // 30 seconds
   calendarEvents: 1000 * 30, // 30 seconds
+  users: 1000 * 30, // 30 seconds
 
   // Slower-changing data: analytics/metrics
   analytics: 1000 * 60, // 60 seconds
+  dashboard: 1000 * 60, // 60 seconds
 
   // Static data
   staticContent: 1000 * 60 * 60, // 1 hour

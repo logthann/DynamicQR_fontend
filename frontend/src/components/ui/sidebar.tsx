@@ -495,24 +495,26 @@ const sidebarMenuButtonVariants = cva(
   },
 )
 
-function SidebarMenuButton({
-  asChild = false,
-  isActive = false,
-  variant = 'default',
-  size = 'default',
-  tooltip,
-  className,
-  ...props
-}: React.ComponentProps<'button'> & {
-  asChild?: boolean
-  isActive?: boolean
-  tooltip?: string | React.ComponentProps<typeof TooltipContent>
-} & VariantProps<typeof sidebarMenuButtonVariants>) {
-  const Comp = asChild ? Slot : 'button'
+const SidebarMenuButton = React.forwardRef(function SidebarMenuButton(
+  {
+    asChild = false,
+    isActive = false,
+    variant = 'default',
+    size = 'default',
+    tooltip,
+    className,
+    ...props
+  }: any,
+  ref: any
+) {
+  const Comp: any = asChild ? Slot : 'button'
   const { isMobile, state } = useSidebar()
 
   const button = (
     <Comp
+      // forward the ref to the underlying element so wrappers (eg Radix)
+      // can control the trigger correctly when using `asChild`.
+      ref={ref}
       data-slot="sidebar-menu-button"
       data-sidebar="menu-button"
       data-size={size}
@@ -543,7 +545,8 @@ function SidebarMenuButton({
       />
     </Tooltip>
   )
-}
+})
+SidebarMenuButton.displayName = 'SidebarMenuButton'
 
 function SidebarMenuAction({
   className,

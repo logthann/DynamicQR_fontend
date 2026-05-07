@@ -1,5 +1,5 @@
 /** @type {import('next').NextConfig} */
-const backendApiBase = process.env.BACKEND_API_URL || 'http://127.0.0.1:8000';
+const backendApiBase = process.env.BACKEND_API_URL || 'http://localhost:8000';
 
 const nextConfig = {
   reactStrictMode: true,

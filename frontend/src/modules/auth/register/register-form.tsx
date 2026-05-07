@@ -19,18 +19,21 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { apiClient } from '@/lib/api/client';
-import type { RegisterRequest } from '@/lib/api/generated/types';
+import { register as registerUser } from '@/apis/auth-api';
+import type { RegisterRequest } from '@/apis/generated/types';
 
 /**
  * Validation schema for register form
  */
 const registerSchema = z.object({
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  fullName: z.string().min(2, 'Full name must be at least 2 characters'),
+  phoneNumber: z.string().min(8, 'Phone number is required'),
+  address: z.string().optional(),
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirmPassword: z.string(),
-  companyName: z.string().min(2, 'Company name must be at least 2 characters'),
-  role: z.enum(['user', 'agency', 'admin']),
+  role: z.enum(['admin', 'employee']),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'Passwords do not match',
   path: ['confirmPassword'],
@@ -44,7 +47,7 @@ export default function RegisterForm() {
   const [isLoading, setIsLoading] = useState(false);
 
   const {
-    register,
+    register: registerField,
     handleSubmit,
     formState: { errors },
   } = useForm<RegisterFormData>({
@@ -60,13 +63,16 @@ export default function RegisterForm() {
       setError(null);
 
       const registerRequest: RegisterRequest = {
+        username: data.username,
+        full_name: data.fullName,
+        phone_number: data.phoneNumber,
+        ...(data.address ? { address: data.address } : {}),
         email: data.email,
         password: data.password,
-        company_name: data.companyName,
         role: data.role,
       };
 
-      const response = await apiClient.register(registerRequest);
+      const response = await registerUser(registerRequest);
 
       // Success - redirect to login
       if (response.id) {
@@ -91,21 +97,69 @@ export default function RegisterForm() {
         </p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          {/* Company Name Field */}
+          {/* Username Field */}
           <div>
-            <label htmlFor="companyName" className="block text-sm font-medium text-foreground">
-              Company Name
+            <label htmlFor="username" className="block text-sm font-medium text-foreground">
+              Username
             </label>
             <input
-              id="companyName"
+              id="username"
               type="text"
-              {...register('companyName')}
+              {...registerField('username')}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Acme Inc"
+              placeholder="employee_001"
             />
-            {errors.companyName && (
-              <p className="mt-1 text-sm text-destructive">{errors.companyName.message}</p>
+            {errors.username && (
+              <p className="mt-1 text-sm text-destructive">{errors.username.message}</p>
             )}
+          </div>
+
+          {/* Full Name Field */}
+          <div>
+            <label htmlFor="fullName" className="block text-sm font-medium text-foreground">
+              Full Name
+            </label>
+            <input
+              id="fullName"
+              type="text"
+              {...registerField('fullName')}
+              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Nguyen Van A"
+            />
+            {errors.fullName && (
+              <p className="mt-1 text-sm text-destructive">{errors.fullName.message}</p>
+            )}
+          </div>
+
+          {/* Phone Number Field */}
+          <div>
+            <label htmlFor="phoneNumber" className="block text-sm font-medium text-foreground">
+              Phone Number
+            </label>
+            <input
+              id="phoneNumber"
+              type="tel"
+              {...registerField('phoneNumber')}
+              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="+84123456789"
+            />
+            {errors.phoneNumber && (
+              <p className="mt-1 text-sm text-destructive">{errors.phoneNumber.message}</p>
+            )}
+          </div>
+
+          {/* Address Field */}
+          <div>
+            <label htmlFor="address" className="block text-sm font-medium text-foreground">
+              Address (optional)
+            </label>
+            <input
+              id="address"
+              type="text"
+              {...registerField('address')}
+              className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Ho Chi Minh City"
+            />
           </div>
 
           {/* Role Field */}
@@ -115,13 +169,12 @@ export default function RegisterForm() {
             </label>
             <select
               id="role"
-              {...register('role')}
+              {...registerField('role')}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              defaultValue="user"
+              defaultValue="employee"
             >
-              <option value="user">User</option>
-              <option value="agency">Agency</option>
               <option value="admin">Admin</option>
+              <option value="employee">Employee</option>
             </select>
             {errors.role && (
               <p className="mt-1 text-sm text-destructive">{errors.role.message}</p>
@@ -136,7 +189,7 @@ export default function RegisterForm() {
             <input
               id="email"
               type="email"
-              {...register('email')}
+              {...registerField('email')}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="you@example.com"
             />
@@ -153,7 +206,7 @@ export default function RegisterForm() {
             <input
               id="password"
               type="password"
-              {...register('password')}
+              {...registerField('password')}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="••••••••"
             />
@@ -170,7 +223,7 @@ export default function RegisterForm() {
             <input
               id="confirmPassword"
               type="password"
-              {...register('confirmPassword')}
+              {...registerField('confirmPassword')}
               className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="••••••••"
             />

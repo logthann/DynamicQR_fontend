@@ -1,306 +1,432 @@
-/**
- * Campaign List Component
- *
- * Displays list of user's campaigns with RBAC-aware controls.
- * Endpoint: GET /api/v1/campaigns (AC-003)
- *
- * Features:
- * - Lists campaigns with React Query caching (30s stale time)
- * - "Create Campaign" button (gated by RBAC)
- * - Loading and error states
- * - Empty state message
- * - Disabled controls for unauthorized users
- */
+"use client"
 
-'use client';
+import * as React from "react"
+import Link from "next/link"
+import { format } from "date-fns"
+import {
+  Plus,
+  Search,
+  Eye,
+  Pencil,
+  Trash2,
+  ArrowUpDown,
+  Calendar,
+  CalendarCheck,
+  CalendarX,
+  CheckCircle2,
+  Circle,
+  Loader2,
+} from "lucide-react"
 
-import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { apiClient } from '@/lib/api/client';
-import { cacheInvalidations, queryClient, queryKeys, staleTimes } from '@/lib/cache/query-client';
-import type { Campaign } from '@/lib/api/generated/types';
+import { deleteCampaign, getCampaigns } from "@/apis/campaigns-api"
+import { getAuthContext } from "@/apis/auth-fetch"
+
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipProvider,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { DateRangePicker } from "@/components/dashboard/date-range-picker"
+import { TablePagination } from "@/components/ui/table-pagination"
+import { useLanguage } from "@/contexts/language-context"
 
 export default function CampaignList() {
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused' | 'draft' | 'archived'>('all');
-  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'this_month' | 'this_year' | 'custom'>('all');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const { t } = useLanguage()
+  const isAdmin = getAuthContext().role === "admin"
 
-  // Query campaigns with 30s stale time (interactive view)
-  const {
-    data: response,
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
-    queryKey: queryKeys.campaigns.list(),
-    queryFn: () => apiClient.getCampaigns(),
-    staleTime: staleTimes.campaigns,
-  });
+  // API response type with creator info from backend
+  type CampaignWithCreator = {
+    id: string
+    name: string
+    description?: string
+    status: 'active' | 'paused' | 'draft' | 'archived'
+    startDate?: string
+    endDate?: string
+    googleEventId?: string
+    calendarSyncStatus?: 'not_linked' | 'synced' | 'out_of_sync' | 'removed'
+    calendarLastSyncedAt?: string
+    gaMeasurementId?: string
+    createdAt: string
+    updatedAt: string
+    creator?: {
+      username?: string
+      email?: string
+    }
+  }
 
-  const campaigns = response?.campaigns || [];
+  // States cho Dữ liệu thực tế
+  const [campaigns, setCampaigns] = React.useState<CampaignWithCreator[]>([])
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [totalItems, setTotalItems] = React.useState(0)
 
-  const deleteMutation = useMutation({
-    mutationFn: apiClient.deleteCampaign,
-    onSuccess: () => {
-      cacheInvalidations.deleteCampaign();
-      queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
-      setActionMessage('Campaign deleted successfully.');
-    },
-    onError: (err: any) => {
-      setActionMessage(err?.message || 'Failed to delete campaign.');
-    },
-  });
+  // States cho Filters
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [startDate, setStartDate] = React.useState("")
+  const [endDate, setEndDate] = React.useState("")
+  const [sortConfig, setSortConfig] = React.useState<{
+    key: keyof CampaignWithCreator
+    direction: "asc" | "desc"
+  }>({ key: "createdAt", direction: "desc" })
 
-  const filteredCampaigns = useMemo(() => {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
+  // States cho Phân trang
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [rowsPerPage, setRowsPerPage] = React.useState(10)
 
-    return campaigns.filter((campaign) => {
-      if (statusFilter !== 'all' && campaign.status !== statusFilter) {
-        return false;
+  // State cho Delete
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
+  const [selectedCampaign, setSelectedCampaign] = React.useState<CampaignWithCreator | null>(null)
+  const [isDeleting, setIsDeleting] = React.useState(false)
+
+  // --- LOGIC FETCH DỮ LIỆU THỰC TẾ ---
+  const fetchCampaigns = React.useCallback(async () => {
+    setIsLoading(true)
+    try {
+      // Call API - getCampaigns returns normalized data with camelCase fields and creator
+      const response = await getCampaigns()
+      // Cast to our extended type that includes creator
+      let transformed = response.campaigns as CampaignWithCreator[]
+
+      // Filter campaigns client-side based on search/filter criteria
+      let filtered = transformed
+
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase()
+        filtered = filtered.filter((c) => {
+          const creatorUsername = c.creator?.username?.toLowerCase() ?? ""
+          const creatorEmail = c.creator?.email?.toLowerCase() ?? ""
+          return (
+            c.name.toLowerCase().includes(query) ||
+            (c.description ?? "").toLowerCase().includes(query) ||
+            creatorUsername.includes(query) ||
+            creatorEmail.includes(query)
+          )
+        })
       }
 
-      const campaignStartDate = campaign.startDate ? new Date(campaign.startDate) : null;
-      if (!campaignStartDate || Number.isNaN(campaignStartDate.getTime())) {
-        return periodFilter === 'all' && !fromDate && !toDate;
+      if (statusFilter !== "all") {
+        filtered = filtered.filter((c) => c.status === statusFilter)
       }
 
-      if (periodFilter === 'today' && campaignStartDate < startOfToday) {
-        return false;
-      }
-      if (periodFilter === 'this_month' && campaignStartDate < startOfMonth) {
-        return false;
-      }
-      if (periodFilter === 'this_year' && campaignStartDate < startOfYear) {
-        return false;
+      if (startDate) {
+        filtered = filtered.filter((c) => c.startDate && c.startDate >= startDate)
       }
 
-      if (fromDate) {
-        const from = new Date(fromDate);
-        if (campaignStartDate < from) {
-          return false;
-        }
+      if (endDate) {
+        filtered = filtered.filter((c) => c.endDate && c.endDate <= endDate)
       }
 
-      if (toDate) {
-        const to = new Date(toDate);
-        if (campaignStartDate > to) {
-          return false;
-        }
-      }
+      // Sort campaigns
+      filtered.sort((a, b) => {
+        const aVal = a[sortConfig.key]
+        const bVal = b[sortConfig.key]
+        if (aVal === undefined || bVal === undefined) return 0
+        if (aVal < bVal) return sortConfig.direction === "asc" ? -1 : 1
+        if (aVal > bVal) return sortConfig.direction === "asc" ? 1 : -1
+        return 0
+      })
 
-      return true;
-    });
-  }, [campaigns, fromDate, periodFilter, statusFilter, toDate]);
+      // Paginate
+      const start = (currentPage - 1) * rowsPerPage
+      const paginated = filtered.slice(start, start + rowsPerPage)
 
-  /**
-   * AC-003: List campaigns from GET /api/v1/campaigns
-   */
+      setCampaigns(paginated)
+      setTotalItems(filtered.length)
+    } catch (error) {
+      console.error("Failed to fetch campaigns:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [currentPage, rowsPerPage, searchQuery, statusFilter, startDate, endDate, sortConfig])
+
+  // Fetch lại khi bất kỳ filter nào thay đổi
+  React.useEffect(() => {
+    fetchCampaigns()
+  }, [fetchCampaigns])
+
+  const totalPages = Math.ceil(totalItems / rowsPerPage)
+
+  const handleRowsPerPageChange = (rows: number) => {
+    setRowsPerPage(rows)
+    setCurrentPage(1)
+  }
+
+  const handleSort = (key: keyof CampaignWithCreator) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }))
+  }
+
+  const handleDelete = async () => {
+    if (!selectedCampaign) return
+    setIsDeleting(true)
+    try {
+      await deleteCampaign({ campaignId: selectedCampaign.id })
+      fetchCampaigns() // Reload list
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      console.error("Failed to delete campaign:", error)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const formatDate = (dateString: string | undefined | null) => {
+    if (!dateString) return "--/--/--"
+    const date = new Date(dateString)
+    return date.toLocaleDateString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+    })
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Campaigns</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage your campaigns from dashboard and open campaign detail for deep actions.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/campaigns/create"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            Create Campaign
-          </Link>
-        </div>
-      </div>
-
-      <div className="grid gap-3 rounded-lg border border-muted bg-card p-4 md:grid-cols-4">
-        <label className="text-xs text-muted-foreground">
-          Status
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="all">All</option>
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="draft">Draft</option>
-            <option value="archived">Archived</option>
-          </select>
-        </label>
-
-        <label className="text-xs text-muted-foreground">
-          Period
-          <select
-            value={periodFilter}
-            onChange={(event) => setPeriodFilter(event.target.value as typeof periodFilter)}
-            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="all">All time</option>
-            <option value="today">Today</option>
-            <option value="this_month">This month</option>
-            <option value="this_year">This year</option>
-            <option value="custom">Custom range</option>
-          </select>
-        </label>
-
-        <label className="text-xs text-muted-foreground">
-          From
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(event) => setFromDate(event.target.value)}
-            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-          />
-        </label>
-
-        <label className="text-xs text-muted-foreground">
-          To
-          <input
-            type="date"
-            value={toDate}
-            onChange={(event) => setToDate(event.target.value)}
-            className="mt-1 block w-full rounded border border-muted bg-background px-3 py-2 text-sm text-foreground"
-          />
-        </label>
-      </div>
-
-      {/* Loading State */}
-      {isLoading && (
-        <div className="rounded-lg border border-muted bg-card p-8 text-center">
-          <div className="flex items-center justify-center space-x-2">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
-            <span className="text-sm text-muted-foreground">Loading campaigns...</span>
+    <TooltipProvider>
+      <div className="flex flex-1 flex-col gap-6">
+        {/* Header - Giữ UI v0 */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("campaignsPage.title")}</h1>
+            <p className="text-sm text-muted-foreground">{t("campaignsPage.subtitle")}</p>
           </div>
+          <Button asChild className="bg-[#04AA6DFF] hover:bg-[#038e5b]">
+            <Link href="/dashboard/campaigns/create">
+              <Plus className="mr-2 size-4" />
+              {t("campaignsPage.createCampaign")}
+            </Link>
+          </Button>
         </div>
-      )}
 
-      {/* Error State */}
-      {isError && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
-          <p className="text-sm text-destructive">
-            Failed to load campaigns: {error instanceof Error ? error.message : 'Unknown error'}
-          </p>
-        </div>
-      )}
+        {/* Toolbox - Giữ UI v0 */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder={t("campaignsPage.searchPlaceholder")}
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value)
+                    setCurrentPage(1) // Reset về trang 1 khi search
+                  }}
+                  className="pl-9"
+                />
+              </div>
 
-      {/* Empty State */}
-      {!isLoading && !isError && filteredCampaigns.length === 0 && (
-        <div className="rounded-lg border border-dashed border-muted bg-card p-8 text-center">
-          <h3 className="text-lg font-medium text-foreground">No campaigns yet</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create your first campaign to get started
-          </p>
-          <Link
-            href="/campaigns/create"
-            className="mt-4 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Create First Campaign
-          </Link>
-        </div>
-      )}
+              <div className="flex flex-wrap items-center gap-3">
+                <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val); setCurrentPage(1); }}>
+                  <SelectTrigger className="w-[140px]">
+                    <SelectValue placeholder={t("common.status")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t("campaignsPage.allStatus")}</SelectItem>
+                    <SelectItem value="active">{t("campaignsPage.active")}</SelectItem>
+                    <SelectItem value="paused">{t("campaignsPage.paused")}</SelectItem>
+                  </SelectContent>
+                </Select>
 
-      {/* Campaign Grid */}
-      {!isLoading && !isError && filteredCampaigns.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredCampaigns.map((campaign: Campaign) => (
-            <CampaignCard
-              key={campaign.id}
-              campaign={campaign}
-              isDeleting={deleteMutation.isPending}
-              onDelete={(campaignId) => {
-                const confirmed = window.confirm('Delete this campaign? This action cannot be undone.');
-                if (!confirmed) {
-                  return;
-                }
-                setActionMessage(null);
-                deleteMutation.mutate({ campaignId });
-              }}
+                <DateRangePicker
+                  onChange={(range) => {
+                    setStartDate(range?.from ? format(range.from, 'yyyy-MM-dd') : "")
+                    setEndDate(range?.to ? format(range.to, 'yyyy-MM-dd') : "")
+                    setCurrentPage(1)
+                  }}
+                  className="w-auto"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Table - Logic lấy từ Backend */}
+        <Card className="relative min-h-[400px]">
+          {isLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/50 backdrop-blur-[1px]">
+              <Loader2 className="size-8 animate-spin text-[#04AA6DFF]" />
+            </div>
+          )}
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className={`w-[220px] ${!isAdmin ? 'hidden' : ''}`}>{t("campaignsPage.createdBy")}</TableHead>
+                    <TableHead className="w-[280px]">
+                      <Button variant="ghost" size="sm" className="-ml-3 h-8 font-medium" onClick={() => handleSort("name")}>
+                        {t("campaignsPage.campaignName")}
+                        <ArrowUpDown className="ml-2 size-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead className="text-center">{t("common.status")}</TableHead>
+                    <TableHead>
+                      <Button variant="ghost" size="sm" className="-ml-3 h-8 font-medium" onClick={() => handleSort("createdAt")}>
+                        {t("campaignsPage.createAt")}
+                        <ArrowUpDown className="ml-2 size-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead>{t("campaignsPage.dateRange")}</TableHead>
+                    <TableHead>{t("campaignsPage.integrations")}</TableHead>
+                    <TableHead className="w-[140px] text-right">{t("common.actions")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {campaigns.length > 0 ? (
+                    campaigns.map((campaign) => (
+                      <TableRow key={campaign.id} className="group">
+                        <TableCell className={!isAdmin ? 'hidden' : ''}>
+                          <div className="max-w-[220px]">
+                            <p className="truncate font-medium">{campaign.creator?.username || t("common.noData")}</p>
+                            <p className="truncate text-xs text-muted-foreground">{campaign.creator?.email || t("common.noData")}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="max-w-[280px]">
+                            <p className="truncate font-medium">{campaign.name}</p>
+                            <p className="truncate text-xs text-muted-foreground">{campaign.description}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className={campaign.status === "active" ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-500" : "border-zinc-500/50 bg-zinc-500/10 text-zinc-500"}>
+                            {campaign.status === "active" ? t("campaignsPage.active") : t("campaignsPage.paused")}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="size-4 text-muted-foreground" />
+                            <span className="text-sm">{formatDate(campaign.createdAt)}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="size-4 text-muted-foreground" />
+                            <span className="text-sm">
+                              {formatDate(campaign.startDate)} - {formatDate(campaign.endDate)}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {/* Logic hiển thị Badge tích hợp */}
+                            {campaign.googleEventId || campaign.calendarSyncStatus ? (
+                              <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                                <CalendarCheck className="mr-1 size-3" /> {t("campaignsPage.calendar")}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-muted-foreground opacity-50"><CalendarX className="mr-1 size-3" /> {t("campaignsPage.calendar")}</Badge>
+                            )}
+                            {campaign.gaMeasurementId ? (
+                              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700"><CheckCircle2 className="mr-1 size-3" /> GA4</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-muted-foreground opacity-50"><Circle className="mr-1 size-3" /> GA4</Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="size-8" asChild>
+                                  <Link href={`/dashboard/campaigns/${campaign.id}`}><Eye className="size-4" /></Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Xem chi tiết</TooltipContent>
+                            </Tooltip>
+
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="size-8" asChild>
+                                  <Link href={`/dashboard/campaigns/${campaign.id}/edit`}><Pencil className="size-4" /></Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Chỉnh sửa</TooltipContent>
+                            </Tooltip>
+
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => { setSelectedCampaign(campaign); setDeleteDialogOpen(true); }}>
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Xóa</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : !isLoading && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                        {t("campaignsPage.noCampaigns")}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <TablePagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              rowsPerPage={rowsPerPage}
+              onPageChange={setCurrentPage}
+              onRowsPerPageChange={handleRowsPerPageChange}
             />
-          ))}
-        </div>
-      )}
+          </CardContent>
+        </Card>
 
-      {actionMessage && (
-        <p className="rounded-md border border-muted bg-card p-3 text-sm text-foreground">
-          {actionMessage}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/**
- * Campaign Card Component
- */
-function CampaignCard({
-  campaign,
-  onDelete,
-  isDeleting,
-}: {
-  campaign: Campaign;
-  onDelete: (campaignId: string) => void;
-  isDeleting: boolean;
-}) {
-  const statusLabel = (campaign.status || 'active').replace('_', ' ');
-  const calendarStatus = campaign.calendarSyncStatus || 'not_linked';
-  const isLinked =
-    Boolean(campaign.googleEventId) ||
-    calendarStatus === 'synced' ||
-    calendarStatus === 'out_of_sync';
-
-  const campaignRecord = campaign as unknown as Record<string, unknown>;
-  const qrCountValue = campaignRecord.qrCount ?? campaignRecord.qr_count;
-  const qrCount = typeof qrCountValue === 'number' ? qrCountValue : null;
-
-  return (
-    <article className="rounded-lg border border-muted bg-card p-4 transition-all hover:border-primary hover:shadow-md">
-      <Link href={`/campaign-detail/${campaign.id}`} className="group block space-y-2">
-        <h3 className="text-lg font-medium text-foreground group-hover:text-primary">{campaign.name}</h3>
-        {campaign.description && <p className="text-sm text-muted-foreground">{campaign.description}</p>}
-        <div className="flex items-center justify-between pt-2">
-          <span className="text-xs text-muted-foreground">Created {new Date(campaign.createdAt).toLocaleDateString()}</span>
-          <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">{statusLabel}</span>
-        </div>
-      </Link>
-
-      <div className="mt-4 space-y-3 border-t border-muted pt-3">
-        <div className="grid gap-1 text-xs text-muted-foreground">
-          <span>Start: {campaign.startDate || '-'}</span>
-          <span>End: {campaign.endDate || '-'}</span>
-          <span>QR codes: {qrCount ?? 'N/A'}</span>
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">Calendar status</span>
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-              isLinked ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-            }`}
-          >
-            {isLinked ? 'Linked' : 'Not linked'}
-          </span>
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            type="button"
-            disabled={isDeleting}
-            onClick={() => onDelete(campaign.id)}
-            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
-          >
-            {isDeleting ? 'Deleting...' : 'Delete'}
-          </button>
-        </div>
+        {/* AlertDialog - Xóa thực tế */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("campaignsPage.deleteTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                Bạn có chắc chắn muốn xóa chiến dịch <strong>{selectedCampaign?.name}</strong>? Hành động này không thể hoàn tác.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Hủy</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                {isDeleting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                Xóa ngay
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-    </article>
-  );
+    </TooltipProvider>
+  )
 }

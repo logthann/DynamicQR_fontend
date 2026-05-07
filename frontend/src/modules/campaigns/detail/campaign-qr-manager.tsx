@@ -17,9 +17,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { apiClient } from '@/lib/api/client';
+import { getQRs, createQR, updateQR, deleteQR, updateQRStatus } from '@/apis/qr-api';
+import { getGA4Properties, detectGA4Measurement } from '@/apis/ga4-api';
 import { cacheInvalidations, queryKeys, staleTimes } from '@/lib/cache/query-client';
-import type { GA4Property, QRCode } from '@/lib/api/generated/types';
+import type { GA4Property, QRCode } from '@/apis/generated/types';
 import QRCodePreview from '@/modules/qr/shared/qr-code-preview';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -83,7 +84,7 @@ type ResolvedTracking = {
 
 const MANUAL_TRACKING_OPTION = '__manual__';
 
-export default function CampaignQRManager({
+export default function Page({
   campaignId,
   campaignDefaultTrackingCode,
   campaignTrackingSource,
@@ -269,7 +270,7 @@ export default function CampaignQRManager({
   const qrQuery = useQuery({
     queryKey: queryKeys.qr.list({ campaignId }),
     queryFn: () =>
-      apiClient.getQRs({
+      getQRs({
         campaign_id: Number.isFinite(campaignIdNumber) ? campaignIdNumber : undefined,
       }),
     staleTime: staleTimes.campaigns,
@@ -298,7 +299,7 @@ export default function CampaignQRManager({
   );
 
   const createMutation = useMutation({
-    mutationFn: apiClient.createQR,
+    mutationFn: createQR,
     onSuccess: () => {
       cacheInvalidations.createQR();
       setCreateName('');
@@ -320,7 +321,7 @@ export default function CampaignQRManager({
   });
 
   const updateMutation = useMutation({
-    mutationFn: apiClient.updateQR,
+    mutationFn: updateQR,
     onSuccess: (updated) => {
       cacheInvalidations.updateQR(String(updated.id));
       setEditQrId(null);
@@ -340,7 +341,7 @@ export default function CampaignQRManager({
   });
 
   const statusMutation = useMutation({
-    mutationFn: apiClient.updateQRStatus,
+    mutationFn: updateQRStatus,
     onSuccess: (updated) => {
       cacheInvalidations.updateQRStatus(String(updated.id));
       setMessage('Updated QR status successfully.');
@@ -349,7 +350,7 @@ export default function CampaignQRManager({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: apiClient.deleteQR,
+    mutationFn: deleteQR,
     onSuccess: () => {
       cacheInvalidations.deleteQR();
       setMessage('Deleted QR successfully.');
@@ -365,7 +366,7 @@ export default function CampaignQRManager({
     }
 
     try {
-      const detected = await apiClient.detectGA4Measurement({ url: cleanUrl });
+      const detected = await detectGA4Measurement({ url: cleanUrl });
       const measurementId = detected.ga_measurement_id?.trim();
       if (!measurementId) {
         setMessage('No GA4 code detected on the provided website.');
