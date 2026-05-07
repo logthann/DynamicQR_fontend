@@ -7,6 +7,8 @@
  * - GET /api/v1/analytics/campaign/{campaign_id}/internal-scans
  * - GET /api/v1/analytics/campaign/{campaign_id}/ga4-realtime
  * - GET /api/v1/analytics/campaign/{campaign_id}/logs
+ * - GET /api/v1/analytics/campaign/{campaign_id}/ga4-insights
+ * - GET /api/v1/analytics/campaign/{campaign_id}/comparison
  */
 
 import { getAPIClient } from './base-client';
@@ -52,6 +54,48 @@ export interface GA4RealtimeData {
 export interface GA4RealtimeResponse {
   campaign_id: number;
   data: GA4RealtimeData[];
+}
+
+export interface GA4InsightEntry {
+  page_path: string;
+  session_source: string;
+  device_category: string;
+  engagement_time: number;
+}
+
+export interface GA4InsightsResponse {
+  campaign_id: number;
+  insights: GA4InsightEntry[];
+}
+
+export interface ComparisonVersion {
+  version: string;
+  title: string;
+  active_period: {
+    start: string;
+    end: string | null;
+  };
+  destination_url: string;
+  total_scans: number;
+  scan_diff: number | null;
+  status: string;
+}
+
+export interface ComparisonQRCode {
+  id: string;
+  name: string;
+  campaign: string;
+  destination_url: string;
+  total_scans: number;
+  unique_scans: number;
+  growth: number | null;
+  sparkline: number[];
+  versions: ComparisonVersion[];
+}
+
+export interface CampaignQRComparisonResponse {
+  campaign_id: number;
+  qr_codes: ComparisonQRCode[];
 }
 
 export interface ScanLogEntry {
@@ -105,6 +149,33 @@ export async function getCampaignHourlyScans(
  */
 export async function getCampaignGA4Realtime(campaignId: number): Promise<GA4RealtimeResponse> {
   const response = await getAPIClient().get(`/analytics/campaign/${campaignId}/ga4-realtime`);
+  return response.data;
+}
+
+/**
+ * Get GA4 insights table data for a campaign
+ * GET /api/v1/analytics/campaign/{campaign_id}/ga4-insights
+ */
+export async function getCampaignGA4Insights(campaignId: number): Promise<GA4InsightsResponse> {
+  const response = await getAPIClient().get(`/analytics/campaign/${campaignId}/ga4-insights`);
+  return response.data;
+}
+
+/**
+ * Get campaign QR comparison analytics
+ * GET /api/v1/analytics/campaign/{campaign_id}/comparison
+ */
+export async function getCampaignQRComparison(
+  campaignId: number,
+  startDate: string,
+  endDate: string
+): Promise<CampaignQRComparisonResponse> {
+  const response = await getAPIClient().get(`/analytics/campaign/${campaignId}/comparison`, {
+    params: {
+      start_date: startDate,
+      end_date: endDate,
+    },
+  });
   return response.data;
 }
 

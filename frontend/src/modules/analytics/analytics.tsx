@@ -8,9 +8,16 @@ import {
   ArrowUpDown,
   Users,
   TrendingUp,
+  TrendingDown,
   Database,
   BarChart3,
   Loader2,
+  QrCode,
+  History,
+  Trophy,
+  Zap,
+  ExternalLink,
+  Check,
 } from "lucide-react"
 import {
   Bar,
@@ -60,15 +67,17 @@ import {
   getCampaignKPISummary,
   getCampaignHourlyScans,
   getCampaignGA4Realtime,
+  getCampaignGA4Insights,
   getCampaignScanLogs,
+  getCampaignQRComparison,
   type HourlyScanData,
   type GA4RealtimeData,
+  type GA4InsightEntry,
+  type ComparisonVersion,
   type ScanLogEntry,
 } from "@/apis/analytics-api"
 import { getCampaigns, type Campaign } from "@/apis/campaigns-api"
-
-// GA4 Insights table data placeholder (API endpoint not yet available)
-const ga4InsightsTableData: { id: number; activePage: string; trafficSource: string; engagementTime: string; userInterests: string }[] = []
+import type { QRCode } from "@/apis/generated/types"
 
 // Chart configs with distinct colors for Internal (blue) vs GA4 (orange)
 const internalChartConfig = {
@@ -81,6 +90,45 @@ const internalChartConfig = {
 const ga4ChartConfig = {
   active_users: { label: "Active Users", color: "hsl(25, 95%, 53%)" }, // Orange
 } satisfies ChartConfig
+
+type QRComparisonRow = {
+  id: string
+  name: string
+  campaign: string
+  destinationUrl: string
+  totalScans: number
+  uniqueScans: number
+  growth: number | null
+  sparkline: number[]
+  versions: ComparisonVersion[]
+  status?: QRCode["status"]
+  createdAt?: string
+}
+
+type RawScanLogEntry = ScanLogEntry & {
+  scanned_at?: string
+  device_type?: string
+  city?: string
+  country?: string
+}
+
+function ScanProgressBar({ value, max }: { value: number; max: number }) {
+  const percentage = max > 0 ? Math.min((value / max) * 100, 100) : 0
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-2 w-24 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-blue-500 transition-all"
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      <span className="text-sm tabular-nums text-muted-foreground">
+        {value.toLocaleString()}
+      </span>
+    </div>
+  )
+}
 
 export default function CampaignAnalyticsPage() {
   const { toast } = useToast()
@@ -112,11 +160,22 @@ export default function CampaignAnalyticsPage() {
   // Real API data states
   const [internalScanData, setInternalScanData] = React.useState<HourlyScanData[]>([])
   const [ga4RealtimeData, setGa4RealtimeData] = React.useState<GA4RealtimeData[]>([])
+  const [ga4InsightsData, setGa4InsightsData] = React.useState<GA4InsightEntry[]>([])
   const [scanLogs, setScanLogs] = React.useState<ScanLogEntry[]>([])
   const [totalScanLogs, setTotalScanLogs] = React.useState(0)
   const [internalTotalPages, setInternalTotalPages] = React.useState(1)
+  const [qrComparisonRows, setQrComparisonRows] = React.useState<QRComparisonRow[]>([])
+  const [isLoadingComparison, setIsLoadingComparison] = React.useState(false)
+  const [selectedQrId, setSelectedQrId] = React.useState<string | null>(null)
 
   const currentCampaign = campaigns.find((c) => c.id === selectedCampaign)
+  const selectedQrComparison = selectedQrId
+    ? qrComparisonRows.find((qr) => qr.id === selectedQrId) ?? null
+    : null
+  const maxQrScans = React.useMemo(
+    () => Math.max(0, ...qrComparisonRows.map((qr) => qr.totalScans)),
+    [qrComparisonRows]
+  )
 
   // Fetch campaigns list
   const fetchCampaigns = React.useCallback(async () => {
@@ -199,7 +258,7 @@ export default function CampaignAnalyticsPage() {
       // API returns { campaign_id, page, limit, total, logs: [...] }
       const logsArray = response.logs ?? response.data ?? []
       // Normalize field names from API (scanned_at → timestamp, device_type → device)
-      const normalizedLogs = logsArray.map((log: any) => ({
+      const normalizedLogs = (logsArray as RawScanLogEntry[]).map((log) => ({
         id: log.id,
         timestamp: log.scanned_at || log.timestamp,
         ip_address: log.ip_address,
@@ -214,6 +273,51 @@ export default function CampaignAnalyticsPage() {
     }
   }, [selectedCampaign, internalCurrentPage])
 
+  const fetchGA4Insights = React.useCallback(async () => {
+    try {
+      const campaignId = parseInt(selectedCampaign)
+      const response = await getCampaignGA4Insights(campaignId)
+      setGa4InsightsData(response.insights ?? [])
+    } catch (error) {
+      console.error("Failed to fetch GA4 insights:", error)
+      setGa4InsightsData([])
+    }
+  }, [selectedCampaign])
+
+  const fetchQRComparisonData = React.useCallback(async () => {
+    if (!selectedCampaign) return
+
+    try {
+      setIsLoadingComparison(true)
+      const campaignId = parseInt(selectedCampaign)
+      const response = await getCampaignQRComparison(campaignId, startDate, endDate)
+      const rows = response.qr_codes.map((qr) => ({
+        id: qr.id,
+        name: qr.name,
+        campaign: qr.campaign || currentCampaign?.name || `Campaign ${selectedCampaign}`,
+        destinationUrl: qr.destination_url,
+        totalScans: qr.total_scans,
+        uniqueScans: qr.unique_scans,
+        growth: qr.growth,
+        sparkline: qr.sparkline ?? [],
+        versions: qr.versions ?? [],
+        status: qr.versions?.[0]?.status === "archived" ? "archived" : "active",
+        createdAt: qr.versions?.[0]?.active_period?.start,
+      } satisfies QRComparisonRow))
+
+      const sortedRows = rows.sort((a, b) => b.totalScans - a.totalScans)
+      setQrComparisonRows(sortedRows)
+      setSelectedQrId((current) =>
+        current && sortedRows.some((row) => row.id === current) ? current : sortedRows[0]?.id ?? null
+      )
+    } catch (error) {
+      console.error("Failed to fetch QR comparison data:", error)
+      setQrComparisonRows([])
+    } finally {
+      setIsLoadingComparison(false)
+    }
+  }, [currentCampaign?.name, endDate, selectedCampaign, startDate])
+
   // Initial data load - only when campaign is selected
   React.useEffect(() => {
     if (!selectedCampaign) return
@@ -223,12 +327,14 @@ export default function CampaignAnalyticsPage() {
         fetchKPIData(),
         fetchHourlyScans(),
         fetchGA4Realtime(),
+        fetchGA4Insights(),
         fetchScanLogs(),
+        fetchQRComparisonData(),
       ])
       setIsLoading(false)
     }
     loadData()
-  }, [fetchKPIData, fetchHourlyScans, fetchGA4Realtime, fetchScanLogs, selectedCampaign])
+  }, [fetchKPIData, fetchHourlyScans, fetchGA4Realtime, fetchGA4Insights, fetchScanLogs, fetchQRComparisonData, selectedCampaign])
 
   // Real-time updates every 10 seconds - only when campaign is selected
   React.useEffect(() => {
@@ -240,7 +346,7 @@ export default function CampaignAnalyticsPage() {
     }, 10000)
 
     return () => clearInterval(interval)
-  }, [realtimeMode, fetchKPIData, fetchGA4Realtime])
+  }, [realtimeMode, selectedCampaign, fetchKPIData, fetchGA4Realtime])
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {
@@ -279,10 +385,12 @@ export default function CampaignAnalyticsPage() {
   const internalStartIndex = (internalCurrentPage - 1) * itemsPerPage
   const paginatedInternalLogs = sortedInternalLogs
 
-  // GA4 insights table - not yet available from API
-  const paginatedGa4Insights: typeof ga4InsightsTableData = []
-  const ga4TotalPages = 1
-  const ga4StartIndex = 0
+  const ga4TotalPages = Math.max(1, Math.ceil(ga4InsightsData.length / itemsPerPage))
+  const ga4StartIndex = (ga4CurrentPage - 1) * itemsPerPage
+  const paginatedGa4Insights = React.useMemo(
+    () => ga4InsightsData.slice(ga4StartIndex, ga4StartIndex + itemsPerPage),
+    [ga4InsightsData, ga4StartIndex, itemsPerPage]
+  )
 
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString)
@@ -292,6 +400,16 @@ export default function CampaignAnalyticsPage() {
       hour: "2-digit",
       minute: "2-digit",
     })
+  }
+
+  const formatUrlLabel = (url: string) => {
+    if (!url) return "No destination"
+    try {
+      const parsed = new URL(url)
+      return `${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`
+    } catch {
+      return url.replace(/^https?:\/\//, "")
+    }
   }
 
   const formatTimeAgo = (date: Date) => {
@@ -682,6 +800,234 @@ export default function CampaignAnalyticsPage() {
         )}
       </div>
 
+      {/* Comparison Analytics Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Comparison Analytics</CardTitle>
+          <CardDescription>
+            Compare QR performance from available backend analytics
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="qrcodes" className="w-full">
+            <TabsList className="mb-4 grid w-full grid-cols-2">
+              <TabsTrigger value="qrcodes" className="flex items-center gap-2">
+                <QrCode className="size-4" />
+                QR Codes
+              </TabsTrigger>
+              <TabsTrigger value="versions" className="flex items-center gap-2">
+                <History className="size-4" />
+                Versions
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="qrcodes" className="space-y-4">
+              {isLoadingComparison ? (
+                <div className="space-y-3 rounded-md border p-4">
+                  <Skeleton className="h-6 w-full" />
+                  <Skeleton className="h-6 w-full" />
+                  <Skeleton className="h-6 w-4/5" />
+                </div>
+              ) : qrComparisonRows.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-10 text-center">
+                  <QrCode className="mb-3 size-10 text-muted-foreground/50" />
+                  <p className="font-medium text-muted-foreground">No QR analytics available</p>
+                  <p className="mt-1 text-sm text-muted-foreground/70">
+                    This campaign has no QR codes or analytics for the selected date range.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[220px]">QR Name</TableHead>
+                          <TableHead>Campaign</TableHead>
+                          <TableHead className="text-right">Total Scans</TableHead>
+                          <TableHead className="text-right">Unique Scans</TableHead>
+                          <TableHead className="text-right">Growth</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {qrComparisonRows.map((qr, index) => {
+                          const fastestGrowth = qrComparisonRows
+                            .filter((item) => item.growth !== null)
+                            .sort((a, b) => (b.growth ?? 0) - (a.growth ?? 0))[0]?.id
+                          const isTopPerformer = index === 0 && qr.totalScans > 0
+                          const isFastestGrowth = qr.id === fastestGrowth && (qr.growth ?? 0) > 0
+
+                          return (
+                            <TableRow
+                              key={qr.id}
+                              className="cursor-pointer transition-colors hover:bg-muted/50"
+                              onClick={() => setSelectedQrId(qr.id)}
+                            >
+                              <TableCell>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium">{qr.name}</span>
+                                  {isTopPerformer && (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                    >
+                                      <Trophy className="mr-1 size-3" />
+                                      Top
+                                    </Badge>
+                                  )}
+                                  {isFastestGrowth && (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                    >
+                                      <Zap className="mr-1 size-3" />
+                                      Fastest
+                                    </Badge>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">{qr.campaign}</TableCell>
+                              <TableCell className="text-right tabular-nums font-medium">
+                                {qr.totalScans.toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-muted-foreground">
+                                {qr.uniqueScans.toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {qr.growth === null ? (
+                                  <span className="text-muted-foreground">N/A</span>
+                                ) : (
+                                  <div
+                                    className={`flex items-center justify-end gap-1 font-medium ${
+                                      qr.growth >= 0
+                                        ? "text-emerald-600 dark:text-emerald-400"
+                                        : "text-red-600 dark:text-red-400"
+                                    }`}
+                                  >
+                                    {qr.growth >= 0 ? (
+                                      <TrendingUp className="size-4" />
+                                    ) : (
+                                      <TrendingDown className="size-4" />
+                                    )}
+                                    {qr.growth >= 0 ? "+" : ""}
+                                    {qr.growth.toFixed(1)}%
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Growth compares the selected date range with the previous equal-length period.
+                  </p>
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="versions" className="space-y-4">
+              {!selectedQrComparison ? (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-10 text-center">
+                  <QrCode className="mb-3 size-10 text-muted-foreground/50" />
+                  <p className="font-medium text-muted-foreground">Select a QR code to compare versions</p>
+                  <p className="mt-1 text-sm text-muted-foreground/70">
+                    Choose a QR code from the QR Codes tab first.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-10 items-center justify-center rounded-full bg-blue-500/10">
+                        <QrCode className="size-5 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{selectedQrComparison.name}</p>
+                        <p className="text-sm text-muted-foreground">Version performance from campaign comparison API.</p>
+                      </div>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedQrId(null)}>
+                      Change QR
+                    </Button>
+                  </div>
+
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[90px]">Version</TableHead>
+                          <TableHead>Title</TableHead>
+                          <TableHead>Active Period</TableHead>
+                          <TableHead>Destination URL</TableHead>
+                          <TableHead>Scans</TableHead>
+                          <TableHead className="text-right">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedQrComparison.versions.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center text-muted-foreground">
+                              No version data available.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          selectedQrComparison.versions.map((version) => (
+                            <TableRow key={version.version}>
+                              <TableCell>
+                                <Badge variant={version.status === "current" ? "default" : "secondary"}>
+                                  {version.version}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="font-medium">{version.title}</TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {formatDateTime(version.active_period.start)} - {version.active_period.end ? formatDateTime(version.active_period.end) : "Present"}
+                              </TableCell>
+                              <TableCell>
+                                {version.destination_url ? (
+                                  <a
+                                    href={version.destination_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1 text-blue-600 hover:underline dark:text-blue-400"
+                                  >
+                                    {formatUrlLabel(version.destination_url)}
+                                    <ExternalLink className="size-3" />
+                                  </a>
+                                ) : (
+                                  <span className="text-muted-foreground">No destination</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <ScanProgressBar value={version.total_scans} max={maxQrScans} />
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {version.status === "current" ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                  >
+                                    <Check className="mr-1 size-3" />
+                                    Current
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary">Archived</Badge>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
       {/* Data Table Section with Tabs */}
       <Card>
         <CardHeader>
@@ -825,21 +1171,21 @@ export default function CampaignAnalyticsPage() {
                     <TableRow className="bg-orange-500/5">
                       <TableHead>Active Page</TableHead>
                       <TableHead>Traffic Source</TableHead>
+                      <TableHead>Device</TableHead>
                       <TableHead>Engagement Time</TableHead>
-                      <TableHead>User Interests</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paginatedGa4Insights.map((insight) => (
-                      <TableRow key={insight.id}>
-                        <TableCell className="font-medium">{insight.activePage}</TableCell>
+                    {paginatedGa4Insights.map((insight, index) => (
+                      <TableRow key={`${insight.page_path}-${insight.session_source}-${index}`}>
+                        <TableCell className="font-medium">{insight.page_path}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="border-orange-500/30 bg-orange-500/5 font-normal text-orange-600 dark:text-orange-400">
-                            {insight.trafficSource}
+                            {insight.session_source}
                           </Badge>
                         </TableCell>
-                        <TableCell className="tabular-nums">{insight.engagementTime}</TableCell>
-                        <TableCell className="text-muted-foreground">{insight.userInterests}</TableCell>
+                        <TableCell>{insight.device_category}</TableCell>
+                        <TableCell className="tabular-nums">{Math.round(insight.engagement_time)}s</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -850,7 +1196,7 @@ export default function CampaignAnalyticsPage() {
               {ga4TotalPages > 1 && (
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-muted-foreground">
-                    Showing {ga4StartIndex + 1} to {Math.min(ga4StartIndex + itemsPerPage, ga4InsightsTableData.length)} of {ga4InsightsTableData.length} entries
+                    Showing {ga4InsightsData.length === 0 ? 0 : ga4StartIndex + 1} to {Math.min(ga4StartIndex + itemsPerPage, ga4InsightsData.length)} of {ga4InsightsData.length} entries
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
