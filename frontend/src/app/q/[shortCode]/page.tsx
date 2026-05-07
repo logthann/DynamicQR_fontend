@@ -7,6 +7,13 @@ type ResolveResult =
   | { type: 'error'; status: number | null };
 
 function getBackendOrigin(): string {
+  const backendApiBase = process.env.BACKEND_API_URL;
+  if (backendApiBase && /^https?:\/\//i.test(backendApiBase)) {
+    return backendApiBase
+      .replace(/\/api\/v1\/?$/i, '')
+      .replace(/\/+$/, '');
+  }
+
   const explicitShortBase = process.env.NEXT_PUBLIC_SHORT_REDIRECT_BASE_URL;
   if (explicitShortBase && /^https?:\/\//i.test(explicitShortBase)) {
     return explicitShortBase
@@ -21,7 +28,7 @@ function getBackendOrigin(): string {
       .replace(/\/+$/, '');
   }
 
-  return 'http://127.0.0.1:8000';
+  return process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8000' : '';
 }
 
 async function resolveShortCode(shortCode: string): Promise<ResolveResult> {
@@ -38,7 +45,12 @@ async function resolveShortCode(shortCode: string): Promise<ResolveResult> {
   if (realIp) forwardHeaders['x-real-ip'] = realIp;
   if (acceptLanguage) forwardHeaders['accept-language'] = acceptLanguage;
 
-  const targetUrl = `${getBackendOrigin()}/q/${encodeURIComponent(shortCode)}`;
+  const backendOrigin = getBackendOrigin();
+  if (!backendOrigin) {
+    return { type: 'error', status: null };
+  }
+
+  const targetUrl = `${backendOrigin}/q/${encodeURIComponent(shortCode)}`;
 
   try {
     const response = await fetch(targetUrl, {
@@ -135,4 +147,3 @@ export default async function PublicShortCodeRedirectPage({
     </section>
   );
 }
-

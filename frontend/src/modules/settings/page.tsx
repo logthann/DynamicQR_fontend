@@ -35,10 +35,23 @@ import { getAuthContext } from "@/apis/auth-fetch"
 import { getUserById, updateUser, changePassword, type User as ApiUser } from "@/apis/users-api"
 import { cacheInvalidations, queryKeys, staleTimes } from "@/lib/cache/query-client"
 
-interface SettingsNotificationPreferences {
+export interface SettingsNotificationPreferences {
   emailAlerts: boolean
   campaignUpdates: boolean
   weeklyReports: boolean
+}
+
+export type SettingsProfileData = {
+  username: string
+  fullName: string
+  phoneNumber: string
+  email: string
+}
+
+export type SettingsPasswordData = {
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
 }
 
 type SettingsUser = ApiUser & {
