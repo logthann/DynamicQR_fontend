@@ -14,13 +14,6 @@ function getBackendOrigin(): string {
       .replace(/\/+$/, '');
   }
 
-  const explicitShortBase = process.env.NEXT_PUBLIC_SHORT_REDIRECT_BASE_URL;
-  if (explicitShortBase && /^https?:\/\//i.test(explicitShortBase)) {
-    return explicitShortBase
-      .replace(/\/q\/?$/i, '')
-      .replace(/\/+$/, '');
-  }
-
   const apiBase = process.env.NEXT_PUBLIC_API_URL;
   if (apiBase && /^https?:\/\//i.test(apiBase)) {
     return apiBase
@@ -65,6 +58,7 @@ async function resolveShortCode(shortCode: string): Promise<ResolveResult> {
       if (location) {
         return { type: 'redirect', location };
       }
+      return { type: 'error', status: null };
     }
 
     if (response.status === 404 || response.status === 410) {
