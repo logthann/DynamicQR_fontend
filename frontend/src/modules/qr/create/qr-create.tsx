@@ -68,7 +68,7 @@ const createQRSchema = (t: (key: string) => string) => z.object({
   description: z.string().max(255, t("qrcodesPage.validation.descriptionMax")).optional().or(z.literal('')),
   campaignId: z.string().min(1, t("qrcodesPage.validation.selectCampaign")),
   destination_url: z.string().url(t("qrcodesPage.validation.validUrl")),
-  qr_type: z.enum(['url', 'event', 'dynamic', 'vcard']),
+  qr_type: z.enum(['url', 'event']),
   ga_measurement_id: z.string().optional().or(z.literal('')),
   utm_source: z.string().optional().or(z.literal('')),
   utm_medium: z.string().optional().or(z.literal('')),
@@ -364,7 +364,7 @@ export default function CreateQRCodePage() {
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="url">{t("qrcodesPage.staticUrl")}</SelectItem>
-                          <SelectItem value="dynamic">{t("qrcodesPage.dynamicQr")}</SelectItem>
+                          <SelectItem value="event">Event</SelectItem>
                         </SelectContent>
                       </Select>
                     )}
