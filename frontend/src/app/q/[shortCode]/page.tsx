@@ -1,16 +1,14 @@
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { API_BASE_URL } from '@/lib/api';
 
 type ResolveResult =
   | { type: 'redirect'; location: string }
   | { type: 'error'; status: number | null };
 
-const HARDCODED_BACKEND_ORIGIN = 'https://dynamicqr-backend.onrender.com';
-const HARDCODED_FRONTEND_ORIGIN = 'https://dynamicqr-fontend.vercel.app';
-
 function getBackendOrigin(): string {
-  return HARDCODED_BACKEND_ORIGIN;
+  return API_BASE_URL;
 }
 
 async function resolveShortCode(shortCode: string): Promise<ResolveResult> {
@@ -122,7 +120,7 @@ export default async function PublicShortCodeRedirectPage({
         Please try again. If the issue continues, check your network or the QR destination.
       </p>
       <Link
-        href={`${HARDCODED_FRONTEND_ORIGIN}/q/${encodeURIComponent(shortCode)}`}
+        href={`/q/${encodeURIComponent(shortCode)}`}
         className="mt-4 inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
       >
         Try Again

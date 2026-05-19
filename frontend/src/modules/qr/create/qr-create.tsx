@@ -149,13 +149,14 @@ export default function CreateQRCodePage() {
     }
 
     const existsInList = campaigns.some((campaign) => String(campaign.id) === initialCampaignId)
-    const existsInDetail = String(campaignDetailQuery.data?.id ?? '') === initialCampaignId
+    const existsInDetail = campaignDetailQuery.data && String(campaignDetailQuery.data.id) === initialCampaignId
 
-    if (!campaignsLoading && (existsInList || existsInDetail)) {
+    // Apply campaign ID as soon as found in either list or detail, don't wait for campaigns loading
+    if (existsInList || existsInDetail) {
       setValue('campaignId', initialCampaignId, { shouldDirty: true, shouldValidate: true })
       hasAppliedInitialCampaignRef.current = true
     }
-  }, [campaignDetailQuery.data?.id, campaigns, campaignsLoading, initialCampaignId, setValue])
+  }, [campaignDetailQuery.data, campaigns, initialCampaignId, setValue])
 
   // --- GA4 DETECTION LOGIC ---
   const detectGA4Mutation = useMutation({

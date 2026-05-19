@@ -186,12 +186,16 @@ export async function getCampaignQRComparison(
 export async function getCampaignScanLogs(
   campaignId: number,
   page: number = 1,
-  limit: number = 50
+  limit: number = 50,
+  startDate?: string,
+  endDate?: string
 ): Promise<ScanLogsResponse> {
   const response = await getAPIClient().get(`/analytics/campaign/${campaignId}/logs`, {
     params: {
       page,
       limit,
+      ...(startDate && { start_date: startDate }),
+      ...(endDate && { end_date: endDate }),
     },
   });
   return response.data;

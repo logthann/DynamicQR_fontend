@@ -220,7 +220,7 @@ export default function QRCodesListPage() {
             <p className="text-sm text-muted-foreground">{t("qrcodesPage.subtitle") || "Quản lý vòng đời mã QR của bạn"}</p>
           </div>
           <Button asChild className="bg-[#04AA6DFF] hover:bg-[#038e5b]">
-            <Link href="/qr/create">
+            <Link href="dashboard/qr/create">
               <Plus className="mr-2 size-4" />
               {t("qrcodesPage.createQRCode") || "Tạo mã QR"}
             </Link>

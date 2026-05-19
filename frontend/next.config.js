@@ -1,8 +1,5 @@
 /** @type {import('next').NextConfig} */
-const backendApiBase =
-  process.env.BACKEND_API_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
+const backendApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
 const nextConfig = {
   reactStrictMode: true,
@@ -28,4 +25,3 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
-

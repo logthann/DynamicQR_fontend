@@ -18,15 +18,19 @@ import {
   Zap,
   ExternalLink,
   Check,
+  X,
 } from "lucide-react"
 import {
   Bar,
   BarChart,
   Line,
   LineChart,
+  Area,
+  AreaChart,
   CartesianGrid,
   XAxis,
   YAxis,
+  ResponsiveContainer,
 } from "recharts"
 
 import { Badge } from "@/components/ui/badge"
@@ -113,22 +117,62 @@ type RawScanLogEntry = ScanLogEntry & {
 }
 
 function ScanProgressBar({ value, max }: { value: number; max: number }) {
-  const percentage = max > 0 ? Math.min((value / max) * 100, 100) : 0
+   const percentage = max > 0 ? Math.min((value / max) * 100, 100) : 0
 
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-2 w-24 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-blue-500 transition-all"
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-      <span className="text-sm tabular-nums text-muted-foreground">
-        {value.toLocaleString()}
-      </span>
-    </div>
-  )
-}
+   return (
+     <div className="flex items-center gap-2">
+       <div className="h-2 w-24 overflow-hidden rounded-full bg-muted">
+         <div
+           className="h-full rounded-full bg-blue-500 transition-all"
+           style={{ width: `${percentage}%` }}
+         />
+       </div>
+       <span className="text-sm tabular-nums text-muted-foreground">
+         {value.toLocaleString()}
+       </span>
+     </div>
+   )
+ }
+
+ function SparklineChart({ data }: { data: number[] }) {
+   if (!data || data.length === 0) {
+     return <span className="text-xs text-muted-foreground">No data</span>
+   }
+
+   // Convert array of numbers to chart data format
+   const chartData = data.map((value, index) => ({
+     index,
+     value,
+   }))
+
+   // Find min and max for scaling
+   const minValue = Math.min(...data)
+   const maxValue = Math.max(...data)
+   const range = maxValue - minValue || 1
+
+   return (
+     <div className="h-12 w-32">
+       <ResponsiveContainer width="100%" height="100%">
+         <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 0 }}>
+           <defs>
+             <linearGradient id="colorSparkline" x1="0" y1="0" x2="0" y2="1">
+               <stop offset="5%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0.3} />
+               <stop offset="95%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0} />
+             </linearGradient>
+           </defs>
+           <Area
+             type="monotone"
+             dataKey="value"
+             stroke="hsl(221, 83%, 53%)"
+             strokeWidth={1.5}
+             fillOpacity={1}
+             fill="url(#colorSparkline)"
+           />
+         </AreaChart>
+       </ResponsiveContainer>
+     </div>
+   )
+ }
 
 export default function CampaignAnalyticsPage() {
   const { toast } = useToast()
@@ -223,19 +267,22 @@ export default function CampaignAnalyticsPage() {
     }
   }, [selectedCampaign, toast])
 
-  // Fetch hourly scan data
-  const fetchHourlyScans = React.useCallback(async () => {
-    try {
-      const campaignId = parseInt(selectedCampaign)
-      const startDateTime = new Date(startDate).toISOString()
-      const endDateTime = new Date(endDate).toISOString()
-      const response = await getCampaignHourlyScans(campaignId, startDateTime, endDateTime)
-      setInternalScanData(response.data)
-      setLastUpdatedInternal(new Date())
-    } catch (error) {
-      console.error('Failed to fetch hourly scans:', error)
-    }
-  }, [selectedCampaign, startDate, endDate])
+   // Fetch hourly scan data
+   const fetchHourlyScans = React.useCallback(async () => {
+     try {
+       const campaignId = parseInt(selectedCampaign)
+       // Fetch last 8 hours of data for the chart
+       const now = new Date()
+       const eightHoursAgo = new Date(now.getTime() - 8 * 60 * 60 * 1000)
+       const startDateTime = eightHoursAgo.toISOString()
+       const endDateTime = now.toISOString()
+       const response = await getCampaignHourlyScans(campaignId, startDateTime, endDateTime)
+       setInternalScanData(response.data)
+       setLastUpdatedInternal(new Date())
+     } catch (error) {
+       console.error('Failed to fetch hourly scans:', error)
+     }
+   }, [selectedCampaign])
 
   // Fetch GA4 real-time data
   const fetchGA4Realtime = React.useCallback(async () => {
@@ -249,29 +296,35 @@ export default function CampaignAnalyticsPage() {
     }
   }, [selectedCampaign])
 
-  // Fetch scan logs
-  const fetchScanLogs = React.useCallback(async () => {
-    try {
-      const campaignId = parseInt(selectedCampaign)
-      const response = await getCampaignScanLogs(campaignId, internalCurrentPage, itemsPerPage)
-      console.log('Scan logs response:', response)
-      // API returns { campaign_id, page, limit, total, logs: [...] }
-      const logsArray = response.logs ?? response.data ?? []
-      // Normalize field names from API (scanned_at → timestamp, device_type → device)
-      const normalizedLogs = (logsArray as RawScanLogEntry[]).map((log) => ({
-        id: log.id,
-        timestamp: log.scanned_at || log.timestamp,
-        ip_address: log.ip_address,
-        device: log.device_type || log.device || 'Unknown',
-        location: log.location || log.city || log.country || 'Unknown',
-      }))
-      setScanLogs(normalizedLogs)
-      setTotalScanLogs(response.total)
-      setInternalTotalPages(Math.ceil(response.total / itemsPerPage))
-    } catch (error) {
-      console.error('Failed to fetch scan logs:', error)
-    }
-  }, [selectedCampaign, internalCurrentPage])
+   // Fetch scan logs
+   const fetchScanLogs = React.useCallback(async () => {
+     try {
+       const campaignId = parseInt(selectedCampaign)
+       // Calculate last 24 hours
+       const now = new Date()
+       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+       const startDateTime = oneDayAgo.toISOString()
+       const endDateTime = now.toISOString()
+
+       const response = await getCampaignScanLogs(campaignId, internalCurrentPage, itemsPerPage, startDateTime, endDateTime)
+       console.log('Scan logs response:', response)
+       // API returns { campaign_id, page, limit, total, logs: [...] }
+       const logsArray = response.logs ?? response.data ?? []
+       // Normalize field names from API (scanned_at → timestamp, device_type → device)
+       const normalizedLogs = (logsArray as RawScanLogEntry[]).map((log) => ({
+         id: log.id,
+         timestamp: log.scanned_at || log.timestamp,
+         ip_address: log.ip_address,
+         device: log.device_type || log.device || 'Unknown',
+         location: log.location || log.city || log.country || 'Unknown',
+       }))
+       setScanLogs(normalizedLogs)
+       setTotalScanLogs(response.total)
+       setInternalTotalPages(Math.ceil(response.total / itemsPerPage))
+     } catch (error) {
+       console.error('Failed to fetch scan logs:', error)
+     }
+   }, [selectedCampaign, internalCurrentPage])
 
   const fetchGA4Insights = React.useCallback(async () => {
     try {
@@ -357,17 +410,76 @@ export default function CampaignAnalyticsPage() {
     }
   }
 
-  // Format hourly scan data for chart display
-  const formattedInternalScanData = React.useMemo(() => {
-    return internalScanData.map(item => ({
-      ...item,
-      hourFormatted: new Date(item.hour).toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
+    // Format hourly scan data for chart display
+    const formattedInternalScanData = React.useMemo(() => {
+      if (internalScanData.length === 0) {
+        // Generate 8 empty hours for the last 8 hours
+        const now = new Date()
+        const emptyHours: HourlyScanData[] = []
+        for (let i = 7; i >= 0; i--) {
+          const hourDate = new Date(now)
+          hourDate.setHours(hourDate.getHours() - i)
+          hourDate.setMinutes(0)
+          hourDate.setSeconds(0)
+          hourDate.setMilliseconds(0)
+          emptyHours.push({
+            hour: hourDate.toISOString(),
+            mobile: 0,
+            desktop: 0,
+            tablet: 0,
+            scans: 0,
+          })
+        }
+        return emptyHours.map(item => ({
+          ...item,
+          hourFormatted: new Date(item.hour).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+          })
+        }))
+      }
+
+      // Create a map of existing data by hour
+      const dataMap = new Map<string, HourlyScanData>()
+      internalScanData.forEach(item => {
+        const hourDate = new Date(item.hour)
+        const hourKey = hourDate.toISOString().slice(0, 13) // YYYY-MM-DDTHH
+        dataMap.set(hourKey, item)
       })
-    }))
-  }, [internalScanData])
+
+      // Generate 8-hour dataset starting from 8 hours ago to now
+      const now = new Date()
+      const allHours: HourlyScanData[] = []
+      for (let i = 7; i >= 0; i--) {
+        const hourDate = new Date(now)
+        hourDate.setHours(hourDate.getHours() - i)
+        hourDate.setMinutes(0)
+        hourDate.setSeconds(0)
+        hourDate.setMilliseconds(0)
+        const hourKey = hourDate.toISOString().slice(0, 13)
+
+        const existingData = dataMap.get(hourKey)
+        allHours.push(
+          existingData || {
+            hour: hourDate.toISOString(),
+            mobile: 0,
+            desktop: 0,
+            tablet: 0,
+            scans: 0,
+          }
+        )
+      }
+
+      return allHours.map(item => ({
+        ...item,
+        hourFormatted: new Date(item.hour).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        })
+      }))
+    }, [internalScanData])
 
   // Sort and paginate internal logs from API
   const sortedInternalLogs = React.useMemo(() => {
@@ -382,10 +494,10 @@ export default function CampaignAnalyticsPage() {
     })
   }, [scanLogs, sortColumn, sortDirection])
 
-  const internalStartIndex = (internalCurrentPage - 1) * itemsPerPage
-  const paginatedInternalLogs = sortedInternalLogs
+   const internalStartIndex = (internalCurrentPage - 1) * itemsPerPage
+   const paginatedInternalLogs = sortedInternalLogs.slice(internalStartIndex, internalStartIndex + itemsPerPage)
 
-  const ga4TotalPages = Math.max(1, Math.ceil(ga4InsightsData.length / itemsPerPage))
+   const ga4TotalPages = Math.max(1, Math.ceil(ga4InsightsData.length / itemsPerPage))
   const ga4StartIndex = (ga4CurrentPage - 1) * itemsPerPage
   const paginatedGa4Insights = React.useMemo(
     () => ga4InsightsData.slice(ga4StartIndex, ga4StartIndex + itemsPerPage),
@@ -681,14 +793,14 @@ export default function CampaignAnalyticsPage() {
               <ChartContainer config={internalChartConfig} className="h-[300px] w-full">
                 <BarChart data={formattedInternalScanData} margin={{ left: 0, right: 12, top: 12, bottom: 12 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis
-                    dataKey="hourFormatted"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    interval={3}
-                    fontSize={12}
-                  />
+                   <XAxis
+                     dataKey="hourFormatted"
+                     tickLine={false}
+                     axisLine={false}
+                     tickMargin={8}
+                     interval={0}
+                     fontSize={12}
+                   />
                   <YAxis tickLine={false} axisLine={false} fontSize={12} />
                   <ChartTooltip content={({ active, payload }) => active && payload ? <ChartTooltipContent hideLabel active={true} payload={payload} coordinate={undefined} label="" accessibilityLayer={false} activeIndex={undefined} /> : null} />
                   <Bar dataKey="mobile" stackId="a" fill="hsl(221, 83%, 53%)" radius={[0, 0, 0, 0]} />
@@ -764,14 +876,14 @@ export default function CampaignAnalyticsPage() {
                   <ChartContainer config={ga4ChartConfig} className="h-[300px] w-full">
                     <LineChart data={ga4RealtimeData} margin={{ left: 0, right: 12, top: 12, bottom: 12 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis
-                        dataKey="time_label"
-                        tickLine={false}
-                        axisLine={false}
-                        tickMargin={8}
-                        interval={3}
-                        fontSize={12}
-                      />
+                       <XAxis
+                         dataKey="time_label"
+                         tickLine={false}
+                         axisLine={false}
+                         tickMargin={8}
+                         interval={0}
+                         fontSize={12}
+                       />
                       <YAxis tickLine={false} axisLine={false} fontSize={12} />
                       <ChartTooltip content={({ active, payload }) => active && payload ? <ChartTooltipContent hideLabel active={true} payload={payload} coordinate={undefined} label="" accessibilityLayer={false} activeIndex={undefined} /> : null} />
                       <Line
@@ -838,88 +950,92 @@ export default function CampaignAnalyticsPage() {
                 </div>
               ) : (
                 <>
-                  <div className="rounded-md border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-[220px]">QR Name</TableHead>
-                          <TableHead>Campaign</TableHead>
-                          <TableHead className="text-right">Total Scans</TableHead>
-                          <TableHead className="text-right">Unique Scans</TableHead>
-                          <TableHead className="text-right">Growth</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {qrComparisonRows.map((qr, index) => {
-                          const fastestGrowth = qrComparisonRows
-                            .filter((item) => item.growth !== null)
-                            .sort((a, b) => (b.growth ?? 0) - (a.growth ?? 0))[0]?.id
-                          const isTopPerformer = index === 0 && qr.totalScans > 0
-                          const isFastestGrowth = qr.id === fastestGrowth && (qr.growth ?? 0) > 0
+                   <div className="rounded-md border">
+                     <Table>
+                       <TableHeader>
+                         <TableRow>
+                           <TableHead className="w-[220px]">QR Name</TableHead>
+                           <TableHead>Campaign</TableHead>
+                           <TableHead className="text-right">Total Scans</TableHead>
+                           <TableHead className="text-right">Unique Scans</TableHead>
+                           <TableHead>Trend</TableHead>
+                           <TableHead className="text-right">Growth</TableHead>
+                         </TableRow>
+                       </TableHeader>
+                       <TableBody>
+                         {qrComparisonRows.map((qr, index) => {
+                           const fastestGrowth = qrComparisonRows
+                             .filter((item) => item.growth !== null)
+                             .sort((a, b) => (b.growth ?? 0) - (a.growth ?? 0))[0]?.id
+                           const isTopPerformer = index === 0 && qr.totalScans > 0
+                           const isFastestGrowth = qr.id === fastestGrowth && (qr.growth ?? 0) > 0
 
-                          return (
-                            <TableRow
-                              key={qr.id}
-                              className="cursor-pointer transition-colors hover:bg-muted/50"
-                              onClick={() => setSelectedQrId(qr.id)}
-                            >
-                              <TableCell>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-medium">{qr.name}</span>
-                                  {isTopPerformer && (
-                                    <Badge
-                                      variant="outline"
-                                      className="border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                                    >
-                                      <Trophy className="mr-1 size-3" />
-                                      Top
-                                    </Badge>
-                                  )}
-                                  {isFastestGrowth && (
-                                    <Badge
-                                      variant="outline"
-                                      className="border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                                    >
-                                      <Zap className="mr-1 size-3" />
-                                      Fastest
-                                    </Badge>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">{qr.campaign}</TableCell>
-                              <TableCell className="text-right tabular-nums font-medium">
-                                {qr.totalScans.toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-muted-foreground">
-                                {qr.uniqueScans.toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {qr.growth === null ? (
-                                  <span className="text-muted-foreground">N/A</span>
-                                ) : (
-                                  <div
-                                    className={`flex items-center justify-end gap-1 font-medium ${
-                                      qr.growth >= 0
-                                        ? "text-emerald-600 dark:text-emerald-400"
-                                        : "text-red-600 dark:text-red-400"
-                                    }`}
-                                  >
-                                    {qr.growth >= 0 ? (
-                                      <TrendingUp className="size-4" />
-                                    ) : (
-                                      <TrendingDown className="size-4" />
-                                    )}
-                                    {qr.growth >= 0 ? "+" : ""}
-                                    {qr.growth.toFixed(1)}%
-                                  </div>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          )
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
+                           return (
+                             <TableRow
+                               key={qr.id}
+                               className="cursor-pointer transition-colors hover:bg-muted/50"
+                               onClick={() => setSelectedQrId(qr.id)}
+                             >
+                               <TableCell>
+                                 <div className="flex flex-wrap items-center gap-2">
+                                   <span className="font-medium">{qr.name}</span>
+                                   {isTopPerformer && (
+                                     <Badge
+                                       variant="outline"
+                                       className="border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                     >
+                                       <Trophy className="mr-1 size-3" />
+                                       Top
+                                     </Badge>
+                                   )}
+                                   {isFastestGrowth && (
+                                     <Badge
+                                       variant="outline"
+                                       className="border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                     >
+                                       <Zap className="mr-1 size-3" />
+                                       Fastest
+                                     </Badge>
+                                   )}
+                                 </div>
+                               </TableCell>
+                               <TableCell className="text-muted-foreground">{qr.campaign}</TableCell>
+                               <TableCell className="text-right tabular-nums font-medium">
+                                 {qr.totalScans.toLocaleString()}
+                               </TableCell>
+                               <TableCell className="text-right tabular-nums text-muted-foreground">
+                                 {qr.uniqueScans.toLocaleString()}
+                               </TableCell>
+                               <TableCell>
+                                 <SparklineChart data={qr.sparkline} />
+                               </TableCell>
+                               <TableCell className="text-right">
+                                 {qr.growth === null ? (
+                                   <span className="text-muted-foreground">N/A</span>
+                                 ) : (
+                                   <div
+                                     className={`flex items-center justify-end gap-1 font-medium ${
+                                       qr.growth >= 0
+                                         ? "text-emerald-600 dark:text-emerald-400"
+                                         : "text-red-600 dark:text-red-400"
+                                     }`}
+                                   >
+                                     {qr.growth >= 0 ? (
+                                       <TrendingUp className="size-4" />
+                                     ) : (
+                                       <TrendingDown className="size-4" />
+                                     )}
+                                     {qr.growth >= 0 ? "+" : ""}
+                                     {qr.growth.toFixed(1)}%
+                                   </div>
+                                 )}
+                               </TableCell>
+                             </TableRow>
+                           )
+                         })}
+                       </TableBody>
+                     </Table>
+                   </div>
                   <p className="text-xs text-muted-foreground">
                     Growth compares the selected date range with the previous equal-length period.
                   </p>
@@ -928,30 +1044,44 @@ export default function CampaignAnalyticsPage() {
             </TabsContent>
 
             <TabsContent value="versions" className="space-y-4">
-              {!selectedQrComparison ? (
-                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-10 text-center">
-                  <QrCode className="mb-3 size-10 text-muted-foreground/50" />
-                  <p className="font-medium text-muted-foreground">Select a QR code to compare versions</p>
-                  <p className="mt-1 text-sm text-muted-foreground/70">
-                    Choose a QR code from the QR Codes tab first.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 items-center justify-center rounded-full bg-blue-500/10">
-                        <QrCode className="size-5 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <div>
-                        <p className="font-medium">{selectedQrComparison.name}</p>
-                        <p className="text-sm text-muted-foreground">Version performance from campaign comparison API.</p>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedQrId(null)}>
-                      Change QR
-                    </Button>
-                  </div>
+               {!selectedQrComparison ? (
+                 <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-10 text-center">
+                   <QrCode className="mb-3 size-10 text-muted-foreground/50" />
+                   <p className="font-medium text-muted-foreground">Select a QR code to compare versions</p>
+                   <p className="mt-1 text-sm text-muted-foreground/70">
+                     Choose a QR code from the QR Codes tab first.
+                   </p>
+                 </div>
+               ) : (
+                 <>
+                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-4">
+                     <div className="flex items-center gap-3">
+                       <div className="flex size-10 items-center justify-center rounded-full bg-blue-500/10">
+                         <QrCode className="size-5 text-blue-600 dark:text-blue-400" />
+                       </div>
+                       <div>
+                         <p className="font-medium">{selectedQrComparison.name}</p>
+                         <p className="text-sm text-muted-foreground">Version performance from campaign comparison API.</p>
+                       </div>
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <Select value={selectedQrId || ""} onValueChange={setSelectedQrId}>
+                         <SelectTrigger className="w-auto">
+                           <SelectValue>Change QR</SelectValue>
+                         </SelectTrigger>
+                         <SelectContent>
+                           {qrComparisonRows.map((qr) => (
+                             <SelectItem key={qr.id} value={qr.id}>
+                               {qr.name}
+                             </SelectItem>
+                           ))}
+                         </SelectContent>
+                       </Select>
+                       <Button variant="outline" size="sm" onClick={() => setSelectedQrId(null)}>
+                         <X className="size-4" />
+                       </Button>
+                     </div>
+                   </div>
 
                   <div className="rounded-md border">
                     <Table>

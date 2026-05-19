@@ -1,47 +1,40 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+  import { useLanguage } from '@/contexts/language-context';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from '@/components/ui/breadcrumb';
 
-const routeLabels: Record<string, string> = {
-  "/dashboard": "breadcrumb.dashboard",
-  "/campaigns": "breadcrumb.campaigns",
-  "/campaigns/create": "breadcrumb.create",
-  "/qrcodes": "breadcrumb.qrcodes",
-  "/qrcodes/create": "breadcrumb.create",
-  "/google-services": "breadcrumb.googleServices",
-  "/google-services/setup": "breadcrumb.setup",
-  "/google-services/sync": "breadcrumb.sync",
-  "/google-services/import": "breadcrumb.import",
-  "/google-services/undo": "breadcrumb.undo",
-  "/reports": "breadcrumb.reports",
-  "/reports/export": "breadcrumb.export",
-  "/settings": "breadcrumb.settings",
-  "/accounts": "breadcrumb.accounts",
-  "/accounts/employees": "breadcrumb.employees",
-};
+const routeLabels: Array<{ route: string; label: string }> = [
+  { route: '/dashboard/campaigns/create', label: 'breadcrumb.create' },
+  { route: '/dashboard/qr/create', label: 'breadcrumb.create' },
+  { route: '/dashboard/integrations/setup', label: 'breadcrumb.setup' },
+  { route: '/dashboard/integrations/sync', label: 'breadcrumb.sync' },
+  { route: '/dashboard/integrations/import', label: 'breadcrumb.import' },
+  { route: '/dashboard/integrations/remove', label: 'breadcrumb.undo' },
+  { route: '/dashboard/settings', label: 'breadcrumb.settings' },
+  { route: '/dashboard/accounts', label: 'breadcrumb.accounts' },
+  { route: '/dashboard/analytics', label: 'breadcrumb.reports' },
+  { route: '/dashboard/campaigns', label: 'breadcrumb.campaigns' },
+  { route: '/dashboard/qr', label: 'breadcrumb.qrcodes' },
+  { route: '/dashboard/integrations', label: 'breadcrumb.googleServices' },
+  { route: '/dashboard', label: 'breadcrumb.dashboard' },
+];
 
 export function DashboardHeader() {
   const pathname = usePathname();
+  const { t } = useLanguage();
 
-  const getBreadcrumbLabel = () => {
-    // Check for exact matches first
-    if (routeLabels[pathname]) {
-      return routeLabels[pathname];
-    }
-
-    // Check for parent routes
-    for (const [route, label] of Object.entries(routeLabels)) {
-      if (pathname.startsWith(route + '/')) {
+  const getBreadcrumbKey = () => {
+    for (const { route, label } of routeLabels) {
+      if (pathname === route || pathname.startsWith(route + '/')) {
         return label;
       }
     }
-
-    return 'Dashboard';
+    return 'breadcrumb.dashboard';
   };
 
-  const currentLabel = getBreadcrumbLabel();
+  const currentLabel = t(getBreadcrumbKey());
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-6">

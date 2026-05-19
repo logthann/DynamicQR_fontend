@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { API_BASE_URL } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,19 +18,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 function getBackendApiBase(): string {
-  const backendApiUrl = process.env.BACKEND_API_URL?.trim();
-  if (backendApiUrl && /^https?:\/\//i.test(backendApiUrl)) {
-    return `${backendApiUrl.replace(/\/api\/v1\/?$/i, '').replace(/\/+$/, '')}/api/v1`;
-  }
-
-  const publicApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (publicApiUrl && /^https?:\/\//i.test(publicApiUrl)) {
-    return publicApiUrl.replace(/\/+$/, '');
-  }
-
-  return process.env.NODE_ENV === 'development'
-    ? 'http://localhost:8000/api/v1'
-    : 'https://dynamicqr-backend.onrender.com/api/v1';
+  return API_BASE_URL.replace(/\/api\/v1\/?$/i, '').replace(/\/+$/, '') + '/api/v1';
 }
 
 function buildProxyHeaders(request: NextRequest): Headers {
@@ -56,11 +45,7 @@ async function proxyApiRequest(
   const path = (params.path ?? []).map(encodeURIComponent).join('/');
 
   if (!backendApiBase) {
-    console.error('[api-proxy] Missing backend API base URL', {
-      path,
-      hasBackendApiUrl: Boolean(process.env.BACKEND_API_URL),
-      hasNextPublicApiUrl: Boolean(process.env.NEXT_PUBLIC_API_URL),
-    });
+    console.error('[api-proxy] Missing backend API base URL');
 
     return Response.json(
       { message: 'Backend API URL is not configured.' },
