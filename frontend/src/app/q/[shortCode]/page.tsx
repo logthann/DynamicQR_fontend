@@ -43,7 +43,11 @@ async function resolveShortCode(shortCode: string): Promise<ResolveResult> {
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
       if (location) {
-        return { type: 'redirect', location };
+        try {
+          return { type: 'redirect', location: new URL(location, targetUrl).toString() };
+        } catch {
+          return { type: 'redirect', location };
+        }
       }
       return { type: 'error', status: null };
     }
@@ -53,7 +57,12 @@ async function resolveShortCode(shortCode: string): Promise<ResolveResult> {
     }
 
     return { type: 'error', status: response.status };
-  } catch {
+  } catch (error) {
+    console.error('[q-redirect] Failed to resolve short code', {
+      shortCode,
+      backendOrigin,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return { type: 'error', status: null };
   }
 }

@@ -2,8 +2,16 @@
  * API Configuration and Helper
  */
 
-// Centralized API Base URL configuration
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+// Centralized API Base URL configuration.
+// Prefer the backend origin used in production, but keep older env names working.
+// Normalizing here keeps server-side redirect/proxy routes stable across local and Vercel.
+const rawBackendBase =
+  process.env.BACKEND_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  'http://localhost:8000';
+
+export const API_BASE_URL = rawBackendBase.replace(/\/api\/v1\/?$/i, '');
 
 interface FetchOptions extends RequestInit {
   data?: any;

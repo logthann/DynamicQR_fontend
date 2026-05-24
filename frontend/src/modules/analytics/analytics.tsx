@@ -65,6 +65,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { TablePagination } from "@/components/ui/table-pagination"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/use-toast"
 import {
@@ -145,10 +146,7 @@ function ScanProgressBar({ value, max }: { value: number; max: number }) {
      value,
    }))
 
-   // Find min and max for scaling
-   const minValue = Math.min(...data)
-   const maxValue = Math.max(...data)
-   const range = maxValue - minValue || 1
+    // min/max removed — sparkline scales automatically via recharts
 
    return (
      <div className="h-12 w-32">
@@ -201,6 +199,10 @@ export default function CampaignAnalyticsPage() {
   const [isRealtimeInitializing] = React.useState(false)
   const itemsPerPage = 5
 
+  // no-op handler for rows-per-page selector (this table currently uses fixed rowsPerPage)
+  const handleInternalRowsPerPageChange = React.useCallback((_rows: number) => {
+    // Intentionally left blank; keep itemsPerPage constant for this table
+  }, [])
   // Real API data states
   const [internalScanData, setInternalScanData] = React.useState<HourlyScanData[]>([])
   const [ga4RealtimeData, setGa4RealtimeData] = React.useState<GA4RealtimeData[]>([])
@@ -372,6 +374,8 @@ export default function CampaignAnalyticsPage() {
   }, [currentCampaign?.name, endDate, selectedCampaign, startDate])
 
   // Initial data load - only when campaign is selected
+  // Note: fetchScanLogs is intentionally NOT included here to avoid re-running
+  // the full load (KPI/Charts/Comparison) when only the logs page changes.
   React.useEffect(() => {
     if (!selectedCampaign) return
     const loadData = async () => {
@@ -381,13 +385,22 @@ export default function CampaignAnalyticsPage() {
         fetchHourlyScans(),
         fetchGA4Realtime(),
         fetchGA4Insights(),
-        fetchScanLogs(),
         fetchQRComparisonData(),
       ])
       setIsLoading(false)
     }
     loadData()
-  }, [fetchKPIData, fetchHourlyScans, fetchGA4Realtime, fetchGA4Insights, fetchScanLogs, fetchQRComparisonData, selectedCampaign])
+  }, [fetchKPIData, fetchHourlyScans, fetchGA4Realtime, fetchGA4Insights, fetchQRComparisonData, selectedCampaign])
+
+  // Separate effect to load scan logs whenever the selected campaign or
+  // the current internal logs page changes. Keeping this separate prevents
+  // a page change from re-triggering the whole dashboard loading state.
+  React.useEffect(() => {
+    if (!selectedCampaign) return
+    fetchScanLogs()
+    // We only depend on fetchScanLogs so it will re-run when internalCurrentPage
+    // or selectedCampaign (which are dependencies of fetchScanLogs) change.
+  }, [fetchScanLogs])
 
   // Real-time updates every 10 seconds - only when campaign is selected
   React.useEffect(() => {
@@ -481,8 +494,9 @@ export default function CampaignAnalyticsPage() {
       }))
     }, [internalScanData])
 
-  // Sort and paginate internal logs from API
-  const sortedInternalLogs = React.useMemo(() => {
+  // Sort internal logs (server returns paged results). We treat `scanLogs`
+  // as the current page of items and apply client-side sorting only on those.
+  const paginatedInternalLogs = React.useMemo(() => {
     if (!sortColumn) return scanLogs
     return [...scanLogs].sort((a, b) => {
       const aVal = a[sortColumn as keyof typeof a]
@@ -494,10 +508,8 @@ export default function CampaignAnalyticsPage() {
     })
   }, [scanLogs, sortColumn, sortDirection])
 
-   const internalStartIndex = (internalCurrentPage - 1) * itemsPerPage
-   const paginatedInternalLogs = sortedInternalLogs.slice(internalStartIndex, internalStartIndex + itemsPerPage)
 
-   const ga4TotalPages = Math.max(1, Math.ceil(ga4InsightsData.length / itemsPerPage))
+  const ga4TotalPages = Math.max(1, Math.ceil(ga4InsightsData.length / itemsPerPage))
   const ga4StartIndex = (ga4CurrentPage - 1) * itemsPerPage
   const paginatedGa4Insights = React.useMemo(
     () => ga4InsightsData.slice(ga4StartIndex, ga4StartIndex + itemsPerPage),
@@ -1252,44 +1264,14 @@ export default function CampaignAnalyticsPage() {
 
               {/* Pagination */}
               {internalTotalPages > 1 && (
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    Showing {internalStartIndex + 1} to {Math.min(internalStartIndex + itemsPerPage, totalScanLogs)} of {totalScanLogs} entries
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setInternalCurrentPage((prev) => Math.max(prev - 1, 1))}
-                      disabled={internalCurrentPage === 1}
-                    >
-                      <ChevronLeft className="size-4" />
-                      Previous
-                    </Button>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: internalTotalPages }, (_, i) => i + 1).map((page) => (
-                        <Button
-                          key={page}
-                          variant={internalCurrentPage === page ? "default" : "outline"}
-                          size="sm"
-                          className="size-8 p-0"
-                          onClick={() => setInternalCurrentPage(page)}
-                        >
-                          {page}
-                        </Button>
-                      ))}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setInternalCurrentPage((prev) => Math.min(prev + 1, internalTotalPages))}
-                      disabled={internalCurrentPage === internalTotalPages}
-                    >
-                      Next
-                      <ChevronRight className="size-4" />
-                    </Button>
-                  </div>
-                </div>
+                <TablePagination
+                  currentPage={internalCurrentPage}
+                  totalPages={internalTotalPages}
+                  totalItems={totalScanLogs}
+                  rowsPerPage={itemsPerPage}
+                  onPageChange={(p) => setInternalCurrentPage(p)}
+                  onRowsPerPageChange={handleInternalRowsPerPageChange}
+                />
               )}
             </TabsContent>
 

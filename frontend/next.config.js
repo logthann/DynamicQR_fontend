@@ -1,5 +1,12 @@
 /** @type {import('next').NextConfig} */
-const backendApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+const backendApiBase = (
+  process.env.BACKEND_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  ''
+)
+  .replace(/\/api\/v1\/?$/i, '')
+  .replace(/\/+$/, '');
 
 const nextConfig = {
   reactStrictMode: true,
